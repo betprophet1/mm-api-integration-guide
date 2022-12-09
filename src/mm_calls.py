@@ -82,13 +82,24 @@ class MMInteractions:
         logging.info(f"found {len(self.my_tournaments)} tournament, ingested {len(self.sport_events)} "
                      f"sport events from {len(config.TOURNAMENTS_INTERESTED)} tournaments")
 
+    def _get_channels(self, socket_id: float):
+        # get websocket channels to subscribe to
+        auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
+        channels_response = requests.post(auth_endpoint_url,
+                                          data={'socket_id': socket_id},
+                                          headers=self.__get_auth_header())
+        if channels_response.status_code != 200:
+            logging.error("failed to get channels")
+            raise Exception("failed to get channels")
+        channels = channels_response.json()
+        return channels.get('data', {}).get('authorized_channel', [])
+
     def subscribe(self):
         auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
         auth_header = self.__get_auth_header()
         auth_headers = {
                            "Authorization": auth_header['Authorization'],
                            "header-subscriptions": '''[{"type":"tournament","ids":[]}]''',
-                           "PartnerId": config.PARTNER_ID,  # TODO: what is this PartnerId
                        }
         pusher = pysher.Pusher(key=config.MM_APP_KEY, cluster=config.APP_CLUSTER,
                                auth_endpoint=auth_endpoint_url,
@@ -106,16 +117,21 @@ class MMInteractions:
         # We can't subscribe until we've connected, so we use a callback handler
         # to subscribe when able
         def connect_handler(data):
-            public_channel = pusher.subscribe('private-broadcast-service=3-device_type=5')
-            private_channel = pusher.subscribe(f'private-service=3-device_type=5-user={config.PARTNER_ID.replace("-", "")}')
+            socket_id = json.loads(data)['socket_id']
+            available_channels = self._get_channels(socket_id)
+            broadcast_channel_name = None
+            private_channel_name = None
+            for channel in available_channels:
+                if 'broadcast' in channel['channel_name']:
+                    broadcast_channel_name = channel['channel_name']
+                else:
+                    private_channel_name = channel['channel_name']
+            broadcast_channel = pusher.subscribe(broadcast_channel_name)
+            private_channel = pusher.subscribe(private_channel_name)
             for t_id in self.my_tournaments:
                 event_name = f'tournaments_{t_id}'
-                public_channel.bind(event_name, public_event_handler)
+                broadcast_channel.bind(event_name, public_event_handler)
                 logging.info(f"subscribed to public channel, event name: {event_name}, successfully")
-            # public_channel.bind('sport_events', public_event_handler)
-            # public_channel.bind('markets', public_event_handler)
-
-
             # TODO: which event should I bind to get wagers/wallet status updates?
             private_channel.bind('wagers', private_event_handler)
             #logging.info("subscribed to private channel successfully")
@@ -208,7 +224,6 @@ class MMInteractions:
         return {
             'Authorization': f'Bearer '
                              f'{self.mm_session["access_token"]}',
-            "PartnerId": config.PARTNER_ID,
         }
 
     def __get_random_odds(self):

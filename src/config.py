@@ -1,4 +1,3 @@
-PARTNER_ID = '2d9f04d7-7542-40ee-852f-93a84c57e80f'
 MM_KEYS = {
     'access_key': '26609e9003ce78f62925dba3e1b6a0ab',
     'secret_key': '8d0b3bcd0b5792dcca573b272e870acf',
