@@ -1,6 +1,6 @@
 MM_KEYS = {
-    'access_key': '26609e9003ce78f62925dba3e1b6a0ab',
-    'secret_key': '8d0b3bcd0b5792dcca573b272e870acf',
+    'access_key': '8b23d829ffdb3562a3ae5d144896fab1',
+    'secret_key': '691596ce78e61e3616c973caf94d0cbf',
 }
 MM_APP_KEY = '1d9316f2cf4c0c40efe1'
 APP_CLUSTER = 'mt1'
@@ -17,4 +17,5 @@ URL = {
     'mm_balance': 'partner/mm/get_balance',
     'mm_place_wager': 'partner/mm/place_wager',
     'mm_cancel_wager': 'partner/mm/cancel_wager',
+    'mm_odds_ladder': 'partner/mm/get_odds_ladder',
 }

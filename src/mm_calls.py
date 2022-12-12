@@ -12,7 +12,6 @@ import uuid
 from urllib.parse import urljoin
 from src import config
 from src.log import logging
-from src import consts
 
 
 class MMInteractions:
@@ -24,6 +23,7 @@ class MMInteractions:
     my_tournaments: dict = dict()
     sport_events: dict = dict()   # key is event id, value is a list of event details and markets
     wagers: dict = dict()    # all wagers bet in the session
+    valid_odds: list = []
 
     def __init__(self):
         self.base_url = config.BASE_URL
@@ -46,6 +46,14 @@ class MMInteractions:
         return mm_session
 
     def seeding(self):
+        # get allowed odds
+        logging.info("start to get allowed odds")
+        odds_ladder_url = urljoin(self.base_url, config.URL['mm_odds_ladder'])
+        odds_response = requests.get(odds_ladder_url, headers=self.__get_auth_header())
+        if odds_response.status_code != 200:
+            raise Exception("not able to get valid odds")
+        self.valid_odds = odds_response.json()['data']
+
         # initiate available tournaments/sport_events
         # tournaments
         logging.info("start seeding tournaments/events/markets")
@@ -220,6 +228,10 @@ class MMInteractions:
         child_thread = threading.Thread(target=self.schedule_in_thread, daemon=False)
         child_thread.start()
 
+    def keep_alive(self):
+        child_thread = threading.Thread(target=self.schedule_in_thread, daemon=False)
+        child_thread.start()
+
     def __get_auth_header(self) -> dict:
         return {
             'Authorization': f'Bearer '
@@ -227,7 +239,7 @@ class MMInteractions:
         }
 
     def __get_random_odds(self):
-        odds = consts.VALID_ODDS[random.randint(0, len(consts.VALID_ODDS) - 1)]
+        odds = self.valid_odds[random.randint(0, len(self.valid_odds) - 1)]
         return odds if random.random() < 0.5 else -1 * odds
 
 
