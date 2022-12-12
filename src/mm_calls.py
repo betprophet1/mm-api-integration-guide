@@ -206,6 +206,23 @@ class MMInteractions:
                     logging.info("cancelled successfully")
                     self.wagers.pop(key)
 
+    def random_batch_cancel_wagers(self):
+        wager_keys = list(self.wagers.keys())
+        batch_keys_to_cancel = random.choices(wager_keys, k=min(4, len(wager_keys)))
+        batch_cancel_body = [{'wager_id': self.wagers[x],
+                              'external_id': x} for x in batch_keys_to_cancel]
+        batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
+        response = requests.post(batch_cancel_url, json={'data': batch_cancel_body}, headers=self.__get_auth_header())
+        if response.status_code != 200:
+            if response.status_code == 404:
+                logging.info("already cancelled")
+                [self.wagers.pop(x) for x in batch_keys_to_cancel]
+            else:
+                logging.info("failed to cancel")
+        else:
+            logging.info("cancelled successfully")
+            [self.wagers.pop(x) for x in batch_keys_to_cancel]
+
     def cancel_all_wagers(self):
         # TODO: upon urgency, I need to cancel all wagers, how to do it?
         print("cancel all wagers")
@@ -222,7 +239,8 @@ class MMInteractions:
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
         schedule.every(5).seconds.do(self.start_betting)
-        schedule.every(7).seconds.do(self.random_cancel_wager)
+        schedule.every(9).seconds.do(self.random_cancel_wager)
+        schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
 
         child_thread = threading.Thread(target=self.schedule_in_thread, daemon=False)
