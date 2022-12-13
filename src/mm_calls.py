@@ -161,6 +161,7 @@ class MMInteractions:
         for key in self.sport_events:
             one_event = self.sport_events[key]
             bet_url = urljoin(self.base_url, config.URL['mm_place_wager'])
+            batch_bet_url = urljoin(self.base_url, config.URL['mm_batch_place'])
             for market in one_event.get('markets', []):
                 if market['type'] == 'moneyline':
                     # only bet on moneyline
@@ -183,6 +184,23 @@ class MMInteractions:
                                 else:
                                     logging.info("successfully")
                                     self.wagers[external_id] = json.loads(bet_response.content).get('data', {})['wager']['id']
+                                # testing batch place wagers
+                                batch_n = 3
+                                external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
+                                batch_body_to_send = [{
+                                    'external_id': external_id_batch[x],
+                                    'line_id': selection[0]['line_id'],
+                                    'odds': odds_to_bet,
+                                    'stake': 1.0
+                                } for x in range(batch_n)]
+                                batch_bet_response = requests.post(batch_bet_url, json={"data": batch_body_to_send},
+                                                                   headers=self.__get_auth_header())
+                                if batch_bet_response.status_code != 200:
+                                    logging.info(f"failed to bet, error {bet_response.content}")
+                                else:
+                                    logging.info("successfully")
+                                    for wager in batch_bet_response.json()['data']['succeed_wagers']:
+                                        self.wagers[wager['external_id']] = wager['id']
 
     def random_cancel_wager(self):
         wager_keys = list(self.wagers.keys())
