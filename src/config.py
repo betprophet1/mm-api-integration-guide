@@ -10,6 +10,7 @@ TOURNAMENTS_INTERESTED = ['NFL', 'NBA']
 BASE_URL = 'https://api-sandbox.betprophet.co'
 URL = {
     'mm_login': 'partner/auth/login',
+    'mm_refresh': 'partner/auth/refresh',
     'mm_ping': 'partner/mm/pusher/ping',
     'mm_auth': 'partner/mm/pusher',
     'mm_tournaments': 'partner/mm/get_tournaments',

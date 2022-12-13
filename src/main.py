@@ -9,5 +9,5 @@ if __name__ == '__main__':
     mm_instance.get_balance()
     mm_instance.subscribe()
     mm_instance.seeding()
-    # mm_instance.auto_betting()
-    mm_instance.keep_alive()
+    mm_instance.auto_betting()
+    # mm_instance.keep_alive()
