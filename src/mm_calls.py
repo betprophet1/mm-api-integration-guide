@@ -12,6 +12,7 @@ import uuid
 from urllib.parse import urljoin
 from src import config
 from src.log import logging
+from src import constants
 
 
 class MMInteractions:
@@ -51,8 +52,10 @@ class MMInteractions:
         odds_ladder_url = urljoin(self.base_url, config.URL['mm_odds_ladder'])
         odds_response = requests.get(odds_ladder_url, headers=self.__get_auth_header())
         if odds_response.status_code != 200:
-            raise Exception("not able to get valid odds")
-        self.valid_odds = odds_response.json()['data']
+            logging.info("not able to get valid odds from api, fall back to local constants")
+            self.valid_odds = constants.VALID_ODDS_BACKUP
+        else:
+            self.valid_odds = odds_response.json()['data']
 
         # initiate available tournaments/sport_events
         # tournaments
@@ -95,6 +98,7 @@ class MMInteractions:
     def _get_channels(self, socket_id: float):
         # get websocket channels to subscribe to
         auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
+        # auth_endpoint_url = "http://localhost:19002/api/v1/mm/pusher"
         channels_response = requests.post(auth_endpoint_url,
                                           data={'socket_id': socket_id},
                                           headers=self.__get_auth_header())
@@ -110,6 +114,7 @@ class MMInteractions:
         auth_headers = {
                            "Authorization": auth_header['Authorization'],
                            "header-subscriptions": '''[{"type":"tournament","ids":[]}]''',
+                           'PartnerId': '0e34e95c-adaf-499d-88d1-a0d968256417',
                        }
         pusher = pysher.Pusher(key=config.MM_APP_KEY, cluster=config.APP_CLUSTER,
                                auth_endpoint=auth_endpoint_url,
@@ -278,6 +283,7 @@ class MMInteractions:
         return {
             'Authorization': f'Bearer '
                              f'{self.mm_session["access_token"]}',
+            'PartnerId': '0e34e95c-adaf-499d-88d1-a0d968256417',
         }
 
     def __get_random_odds(self):
