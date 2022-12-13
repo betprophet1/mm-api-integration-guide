@@ -74,6 +74,8 @@ class MMInteractions:
                 events_response = requests.get(event_url, params={'tournament_id': one_t['id']}, headers=headers)
                 if events_response.status_code == 200:
                     events = json.loads(events_response.content).get('data', {}).get('sport_events')
+                    if events is None:
+                        continue
                     for event in events:
                         market_response = requests.get(market_url, params={'event_id': event['event_id']},
                                                        headers=headers)

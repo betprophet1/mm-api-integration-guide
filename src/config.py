@@ -1,7 +1,18 @@
 MM_KEYS = {
-    'access_key': '8b23d829ffdb3562a3ae5d144896fab1',
-    'secret_key': '691596ce78e61e3616c973caf94d0cbf',
+    'access_key': '72e942504b5fdf1fab002b12f51ac081',
+    'secret_key': '9ad94ea0a5932bc2de6e743b1876eb58',
 }
+
+#MM_KEYS = {
+#    'access_key': '10e0e9e69be761a50eadb30a56768ec0',
+#    'secret_key': '46faac2f57bd24814aab7835cadb2df5',
+#}
+
+# MM_KEYS = {
+#    'access_key': '8b23d829ffdb3562a3ae5d144896fab1',
+#    'secret_key': '691596ce78e61e3616c973caf94d0cbf',
+#}
+
 MM_APP_KEY = '1d9316f2cf4c0c40efe1'
 APP_CLUSTER = 'mt1'
 TOURNAMENTS_INTERESTED = ['NFL', 'NBA']
