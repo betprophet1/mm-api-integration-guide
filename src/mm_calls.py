@@ -120,6 +120,7 @@ class MMInteractions:
 
         def private_event_handler(*args, **kwargs):
             print("processing private, Args:", args)
+            print(f"event details {base64.b64decode(json.loads(args[0]).get('payload', '{}'))}")
             print("processing private, Kwargs:", kwargs)
 
         # We can't subscribe until we've connected, so we use a callback handler
@@ -129,20 +130,23 @@ class MMInteractions:
             available_channels = self._get_channels(socket_id)
             broadcast_channel_name = None
             private_channel_name = None
+            private_events = None
             for channel in available_channels:
                 if 'broadcast' in channel['channel_name']:
                     broadcast_channel_name = channel['channel_name']
                 else:
                     private_channel_name = channel['channel_name']
+                    private_events = channel['binding_events']
             broadcast_channel = pusher.subscribe(broadcast_channel_name)
             private_channel = pusher.subscribe(private_channel_name)
             for t_id in self.my_tournaments:
                 event_name = f'tournaments_{t_id}'
                 broadcast_channel.bind(event_name, public_event_handler)
                 logging.info(f"subscribed to public channel, event name: {event_name}, successfully")
-            # TODO: which event should I bind to get wagers/wallet status updates?
-            private_channel.bind('wagers', private_event_handler)
-            #logging.info("subscribed to private channel successfully")
+
+            for private_event in private_events:
+                private_channel.bind(private_event['name'], private_event_handler)
+                logging.info(f"subscribed to private channel, event name: {private_event['name']}, successfully")
 
         pusher.connection.bind('pusher:connection_established', connect_handler)
         pusher.connect()
