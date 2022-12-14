@@ -1,6 +1,6 @@
 MM_KEYS = {
-    'access_key': 'f458d1d13ec25936e14e5fdd9c42b2f8',
-    'secret_key': 'dc69ccbfafe4b780764a8c70c3cbbdba',
+    'access_key': '3d15ed226d4dd54337e9acc38ce7dd8d',
+    'secret_key': 'fc03f64a928a5c5a281c74035376ef29',
 }
 
 MM_APP_KEY = '06594cdd7452659f5318'

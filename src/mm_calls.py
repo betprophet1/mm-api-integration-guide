@@ -84,6 +84,9 @@ class MMInteractions:
                                                        headers=headers)
                         if market_response.status_code == 200:
                             markets = json.loads(market_response.content).get('data', {}).get('markets', {})
+                            if markets is None:
+                                # this is more like a bug in MM api, as the event actually already closed
+                                continue
                             event['markets'] = markets
                             self.sport_events[event['event_id']] = event
                         else:
@@ -216,6 +219,9 @@ class MMInteractions:
     def random_cancel_wager(self):
         wager_keys = list(self.wagers.keys())
         for key in wager_keys:
+            if key not in self.wagers:
+                # just in case already canceled by another thread
+                continue
             wager_id = self.wagers[key]
             cancel_url = urljoin(self.base_url, config.URL['mm_cancel_wager'])
             if random.random() < 0.5:  # 50% cancel
@@ -228,7 +234,8 @@ class MMInteractions:
                 if response.status_code != 200:
                     if response.status_code == 404:
                         logging.info("already cancelled")
-                        self.wagers.pop(key)
+                        if key in self.wagers:
+                            self.wagers.pop(key)
                     else:
                         logging.info("failed to cancel")
                 else:
