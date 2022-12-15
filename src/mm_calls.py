@@ -270,7 +270,7 @@ class MMInteractions:
             schedule.run_pending()
             time.sleep(1)
 
-    def __auto_extend_session(self):
+    def auto_extend_session(self):
         # need to use new api, for now just create new session to pretend session extended
         refresh_url = urljoin(self.base_url, config.URL['mm_refresh'])
         response = requests.post(refresh_url, json={'refresh_token': self.mm_session['refresh_token']},
@@ -278,7 +278,7 @@ class MMInteractions:
         if response.status_code != 200:
             logging.info("Failed to call refresh endpoint")
         else:
-            self.mm_session = response.json()['data']
+            self.mm_session['access_token'] = response.json()['data']['access_token']
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
