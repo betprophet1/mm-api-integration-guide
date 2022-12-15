@@ -25,6 +25,7 @@ class MMInteractions:
     sport_events: dict = dict()   # key is event id, value is a list of event details and markets
     wagers: dict = dict()    # all wagers bet in the session
     valid_odds: list = []
+    pusher = None
 
     def __init__(self):
         self.base_url = config.BASE_URL
@@ -120,9 +121,9 @@ class MMInteractions:
                            "Authorization": auth_header['Authorization'],
                            "header-subscriptions": '''[{"type":"tournament","ids":[]}]''',
                        }
-        pusher = pysher.Pusher(key=config.MM_APP_KEY, cluster=config.APP_CLUSTER,
-                               auth_endpoint=auth_endpoint_url,
-                               auth_endpoint_headers=auth_headers)
+        self.pusher = pysher.Pusher(key=config.MM_APP_KEY, cluster=config.APP_CLUSTER,
+                                    auth_endpoint=auth_endpoint_url,
+                                    auth_endpoint_headers=auth_headers)
 
         def public_event_handler(*args, **kwargs):
             print("processing public, Args:", args)
@@ -148,8 +149,8 @@ class MMInteractions:
                 else:
                     private_channel_name = channel['channel_name']
                     private_events = channel['binding_events']
-            broadcast_channel = pusher.subscribe(broadcast_channel_name)
-            private_channel = pusher.subscribe(private_channel_name)
+            broadcast_channel = self.pusher.subscribe(broadcast_channel_name)
+            private_channel = self.pusher.subscribe(private_channel_name)
             for t_id in self.my_tournaments:
                 event_name = f'tournaments_{t_id}'
                 broadcast_channel.bind(event_name, public_event_handler)
@@ -159,8 +160,8 @@ class MMInteractions:
                 private_channel.bind(private_event['name'], private_event_handler)
                 logging.info(f"subscribed to private channel, event name: {private_event['name']}, successfully")
 
-        pusher.connection.bind('pusher:connection_established', connect_handler)
-        pusher.connect()
+        self.pusher.connection.bind('pusher:connection_established', connect_handler)
+        self.pusher.connect()
 
     def get_balance(self):
         balance_url = urljoin(self.base_url, config.URL['mm_balance'])
@@ -278,6 +279,10 @@ class MMInteractions:
             logging.info("Failed to call refresh endpoint")
         else:
             self.mm_session['access_token'] = response.json()['data']['access_token']
+            if self.pusher is not None:
+                self.pusher.disconnect()
+                self.pusher = None
+            self.subscribe()    # need to subscribe again, as the old access token will expire soon
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
