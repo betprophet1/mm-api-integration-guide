@@ -89,8 +89,10 @@ class MMInteractions:
                                 continue
                             event['markets'] = markets
                             self.sport_events[event['event_id']] = event
+                            logging.info(f'successfully get markets of events {event["name"]}')
                         else:
-                            logging.info(f'failed to get markets of events {event["name"]}')
+                            logging.info(f'failed to get markets of events {event["name"]},'
+                                         f' error: {market_response.reason}')
                 else:
                     logging.info(f'skip tournament {one_t["name"]} as api request failed')
 
