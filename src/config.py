@@ -1,11 +1,16 @@
+import json
+
+with open('user_info.json') as fp:
+    user_info_dict = json.load(fp)
+
 MM_KEYS = {
-    'access_key': '3d15ed226d4dd54337e9acc38ce7dd8d',
-    'secret_key': 'fc03f64a928a5c5a281c74035376ef29',
+    'access_key': user_info_dict['access_key'],
+    'secret_key': user_info_dict['secret_key'],
 }
 
 MM_APP_KEY = '06594cdd7452659f5318'
 APP_CLUSTER = 'mt1'
-TOURNAMENTS_INTERESTED = ['NFL', 'NBA']
+TOURNAMENTS_INTERESTED = user_info_dict['tournaments']
 
 BASE_URL = 'https://api-sandbox.betprophet.co'
 URL = {
