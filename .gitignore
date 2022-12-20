@@ -129,3 +129,4 @@ dmypy.json
 # Pyre type checker
 .pyre/
 config_staging.py
+.DS_Store
