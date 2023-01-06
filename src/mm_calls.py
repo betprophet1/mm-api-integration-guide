@@ -152,7 +152,7 @@ class MMInteractions:
             broadcast_channel = self.pusher.subscribe(broadcast_channel_name)
             private_channel = self.pusher.subscribe(private_channel_name)
             for t_id in self.my_tournaments:
-                event_name = f'tournaments_{t_id}'
+                event_name = f'tournament_{t_id}'
                 broadcast_channel.bind(event_name, public_event_handler)
                 logging.info(f"subscribed to public channel, event name: {event_name}, successfully")
 
@@ -174,10 +174,12 @@ class MMInteractions:
 
     def start_betting(self):
         logging.info("Start betting, randomly :)")
+        bet_url = urljoin(self.base_url, config.URL['mm_place_wager'])
+        batch_bet_url = urljoin(self.base_url, config.URL['mm_batch_place'])
+        if '.prophetbettingexchange' in bet_url:
+            raise Exception("only allowed to run in non production environment")
         for key in self.sport_events:
             one_event = self.sport_events[key]
-            bet_url = urljoin(self.base_url, config.URL['mm_place_wager'])
-            batch_bet_url = urljoin(self.base_url, config.URL['mm_batch_place'])
             for market in one_event.get('markets', []):
                 if market['type'] == 'moneyline':
                     # only bet on moneyline
