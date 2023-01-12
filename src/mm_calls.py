@@ -308,7 +308,10 @@ class MMInteractions:
 
     def __get_random_odds(self):
         odds = self.valid_odds[random.randint(0, len(self.valid_odds) - 1)]
-        return odds if random.random() < 0.5 else -1 * odds
+        odds = odds if random.random() < 0.5 else -1 * odds
+        if odds == -100:
+            odds = 100
+        return odds
 
 
 
