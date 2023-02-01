@@ -261,7 +261,11 @@ class MMInteractions:
                 logging.info("failed to cancel")
         else:
             logging.info("cancelled successfully")
-            [self.wagers.pop(x) for x in batch_keys_to_cancel]
+            for key in batch_keys_to_cancel:
+                try:
+                    self.wagers.pop(key)
+                except Exception as e:
+                    print(e)
 
     def cancel_all_wagers(self):
         # TODO: upon urgency, I need to cancel all wagers, how to do it?
