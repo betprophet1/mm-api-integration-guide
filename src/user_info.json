@@ -1,5 +1,6 @@
 {
-    "access_key": "faf1dac2ca9cc116599b666b89a7b3bb",
-    "secret_key": "92280106f0942fdcb3e46104f90a783c",
-    "tournaments": ["NBA","College Basketball","NHL", "Premier League", "UEFA Champions League"]
+    "access_key": "e9bb8fd9c0fff8b5a8ac29365e2d8406",
+    "secret_key": "843b731ab5eedbf9711b9bb3306c7895",
+    "tournaments": ["NBA","College Basketball","NHL", "Premier League",
+        "Champions League", "Bundesliga", "La Liga"]
 }

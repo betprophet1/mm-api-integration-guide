@@ -181,17 +181,23 @@ class MMInteractions:
         for key in self.sport_events:
             one_event = self.sport_events[key]
             for market in one_event.get('markets', []):
-                if market['type'] == 'moneyline':
+                if True: #market['type'] == 'moneyline':
                     # only bet on moneyline
+                    selections = market.get('selections', [])
                     if random.random() < 0.3:   # 30% chance to bet
-                        for selection in market.get('selections', []):
+                        if 'market_lines' in market:
+                            selections = [x.get('selections', []) for x in market['market_lines'] if x.get('favourite', False)][0]
+                        if len(selections) == 0:
+                            logging.error(f"selections should not be empty for event {one_event['event_id']}")
+                        for selection in selections:
                             if random.random() < 0.3: #30% chance to bet
+                                picked_selection = 0
                                 odds_to_bet = self.__get_random_odds()
                                 external_id = str(uuid.uuid1())
-                                logging.info(f"going to bet on '{one_event['name']}' on moneyline, side {selection[0]['name']} with odds {odds_to_bet}")
+                                logging.info(f"going to bet on '{one_event['name']}' on moneyline, side {selection[picked_selection]['name']} with odds {odds_to_bet}")
                                 body_to_send = {
                                     'external_id': external_id,
-                                    'line_id': selection[0]['line_id'],
+                                    'line_id': selection[picked_selection]['line_id'],
                                     'odds': odds_to_bet,
                                     'stake': 1.0
                                 }
@@ -207,7 +213,7 @@ class MMInteractions:
                                 external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
                                 batch_body_to_send = [{
                                     'external_id': external_id_batch[x],
-                                    'line_id': selection[0]['line_id'],
+                                    'line_id': selection[picked_selection]['line_id'],
                                     'odds': odds_to_bet,
                                     'stake': 1.0
                                 } for x in range(batch_n)]
@@ -293,8 +299,8 @@ class MMInteractions:
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
         schedule.every(5).seconds.do(self.start_betting)
-        schedule.every(9).seconds.do(self.random_cancel_wager)
-        schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
+        # schedule.every(9).seconds.do(self.random_cancel_wager)
+        # schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
 
         child_thread = threading.Thread(target=self.schedule_in_thread, daemon=False)
