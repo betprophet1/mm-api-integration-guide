@@ -10,7 +10,7 @@ import threading
 import uuid
 
 from urllib.parse import urljoin
-from src import config
+from src import config_staging as config
 from src.log import logging
 from src import constants
 
@@ -184,25 +184,31 @@ class MMInteractions:
                 if True: #market['type'] == 'moneyline':
                     # only bet on moneyline
                     selections = market.get('selections', [])
-                    if random.random() < 0.3:   # 30% chance to bet
+                    if random.random() < 0.5:   # 30% chance to bet
                         if 'market_lines' in market:
                             selections = [x.get('selections', []) for x in market['market_lines'] if x.get('favourite', False)][0]
                         if len(selections) == 0:
-                            logging.error(f"selections should not be empty for event {one_event['event_id']}")
+                            error_code = f"selections should not be empty for event {one_event['event_id']}"
+                            logging.error(error_code)
+                            raise Exception(error_code)
                         for selection in selections:
-                            if random.random() < 0.3: #30% chance to bet
+                            if random.random() < 0.5: #30% chance to bet
                                 picked_selection = 0
                                 odds_to_bet = self.__get_random_odds()
                                 external_id = str(uuid.uuid1())
-                                logging.info(f"going to bet on '{one_event['name']}' on moneyline, side {selection[picked_selection]['name']} with odds {odds_to_bet}")
+                                logging.info(f"going to bet on '{one_event['name']}' on {market['type']}, side {selection[picked_selection]['name']} with odds {odds_to_bet}")
                                 body_to_send = {
                                     'external_id': external_id,
                                     'line_id': selection[picked_selection]['line_id'],
                                     'odds': odds_to_bet,
                                     'stake': 1.0
                                 }
-                                bet_response = requests.post(bet_url, json=body_to_send,
-                                                             headers=self.__get_auth_header())
+                                try:
+                                    bet_response = requests.post(bet_url, json=body_to_send,
+                                                                 headers=self.__get_auth_header())
+                                except Exception as e:
+                                    logging.warning(e)
+                                    continue
                                 if bet_response.status_code != 200:
                                     logging.info(f"failed to bet, error {bet_response.content}")
                                 else:
@@ -300,7 +306,7 @@ class MMInteractions:
         logging.info("schedule to bet every 10 seconds")
         schedule.every(5).seconds.do(self.start_betting)
         # schedule.every(9).seconds.do(self.random_cancel_wager)
-        # schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
+        schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
 
         child_thread = threading.Thread(target=self.schedule_in_thread, daemon=False)
