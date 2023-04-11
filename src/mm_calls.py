@@ -17,6 +17,7 @@ from src import constants
 
 GLOCAL_RESULT = []
 RUNNING = False
+MAX_LATENCY = 0
 def _request_post_star(argdict: dict):
     GLOCAL_RESULT.append(requests.post(**argdict))
 
@@ -159,12 +160,18 @@ class MMInteractions:
             print("processing public, Kwargs:", kwargs)
 
         def private_event_handler(*args, **kwargs):
+            global MAX_LATENCY
             print("processing private, Args:", args)
             arg_dict = json.loads(args[0])
             print(f"msg sent out at: {arg_dict.get('timestamp', 0) / 1000} \n event details {base64.b64decode(arg_dict.get('payload', '{}'))}")
-            x = 1+1
-            '''payload = json.loads(base64.b64decode(arg_dict.get('payload', '{}')))
-            if len(payload) > 0:
+            payload = json.loads(base64.b64decode(arg_dict.get('payload', '{}')))
+            if 'sequence_number' in payload['info'] and payload['info']['update_type'] == 'status':
+                latency = (arg_dict.get('timestamp', 0)/1000 - payload['info']['sequence_number'])/1000
+                print(f"timestamp - sequence number : {latency} ms")
+                if latency > MAX_LATENCY:
+                    MAX_LATENCY = latency
+            x = 1 + 1
+            '''if len(payload) > 0:
                 if 'info' in payload and 'status' in payload['info']:
                     if payload['info']['status'] == 'open':
                         external_id = payload['info']['external_id']
@@ -275,7 +282,7 @@ class MMInteractions:
                                     bet_response = requests.post(bet_url, json=body_to_send,
                                                                  headers=self.__get_auth_header())
                                     # additional concurrently bets
-                                    concurrent_n = 2
+                                    concurrent_n = 31
                                     for j in range(5):
                                         concurrent_requests = []
                                         for i in range(concurrent_n):
