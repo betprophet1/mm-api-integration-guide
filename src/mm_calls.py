@@ -165,11 +165,12 @@ class MMInteractions:
             arg_dict = json.loads(args[0])
             print(f"msg sent out at: {arg_dict.get('timestamp', 0) / 1000} \n event details {base64.b64decode(arg_dict.get('payload', '{}'))}")
             payload = json.loads(base64.b64decode(arg_dict.get('payload', '{}')))
-            if 'sequence_number' in payload['info'] and payload['info']['update_type'] == 'status':
-                latency = (arg_dict.get('timestamp', 0)/1000 - payload['info']['sequence_number'])/1000
-                print(f"timestamp - sequence number : {latency} ms")
-                if latency > MAX_LATENCY:
-                    MAX_LATENCY = latency
+            if arg_dict.get('change_type') == 'wagers':
+                if 'sequence_number' in payload['info'] and payload['info']['update_type'] == 'status':
+                    latency = (arg_dict.get('timestamp', 0)/1000 - payload['info']['sequence_number'])/1000
+                    print(f"timestamp - sequence number : {latency} ms")
+                    if latency > MAX_LATENCY:
+                        MAX_LATENCY = latency
             x = 1 + 1
             '''if len(payload) > 0:
                 if 'info' in payload and 'status' in payload['info']:
