@@ -165,11 +165,12 @@ class MMInteractions:
             arg_dict = json.loads(args[0])
             print(f"msg sent out at: {arg_dict.get('timestamp', 0) / 1000} \n event details {base64.b64decode(arg_dict.get('payload', '{}'))}")
             payload = json.loads(base64.b64decode(arg_dict.get('payload', '{}')))
-            if 'sequence_number' in payload['info'] and payload['info']['update_type'] == 'status':
-                latency = (arg_dict.get('timestamp', 0)/1000 - payload['info']['sequence_number'])/1000
-                print(f"timestamp - sequence number : {latency} ms")
-                if latency > MAX_LATENCY:
-                    MAX_LATENCY = latency
+            if arg_dict.get('change_type') == 'wagers':
+                if 'sequence_number' in payload['info'] and payload['info']['update_type'] == 'status':
+                    latency = (arg_dict.get('timestamp', 0)/1000 - payload['info']['sequence_number'])/1000
+                    print(f"timestamp - sequence number : {latency} ms")
+                    if latency > MAX_LATENCY:
+                        MAX_LATENCY = latency
             x = 1 + 1
             '''if len(payload) > 0:
                 if 'info' in payload and 'status' in payload['info']:
@@ -282,8 +283,8 @@ class MMInteractions:
                                     bet_response = requests.post(bet_url, json=body_to_send,
                                                                  headers=self.__get_auth_header())
                                     # additional concurrently bets
-                                    concurrent_n = 31
-                                    for j in range(5):
+                                    concurrent_n = 20
+                                    for j in range(0):
                                         concurrent_requests = []
                                         for i in range(concurrent_n):
                                             external_id = str(uuid.uuid1())
@@ -320,7 +321,7 @@ class MMInteractions:
                                     logging.info("successfully")
                                     self.wagers[external_id] = json.loads(bet_response.content).get('data', {})['wager']['id']
                                     # test cancel wager immediately
-                                    '''
+
                                     body = {
                                         'external_id': external_id,
                                         'wager_id': json.loads(bet_response.content).get('data', {})['wager']['id'],
@@ -329,15 +330,14 @@ class MMInteractions:
                                     cancel_response = threading.Thread(target=_request_post_star,
                                                                        args=({'url': cancel_url, 'json': body,
                                                                               'headers': self.__get_auth_header()},))
-                                    cancel_response2 = threading.Thread(target=_request_post_star,
-                                                                        args=({'url': cancel_url, 'json': body,
-                                                                              'headers': self.__get_auth_header()},))
+                                    # cancel_response2 = threading.Thread(target=_request_post_star,
+                                    #                                    args=({'url': cancel_url, 'json': body,
+                                    #                                          'headers': self.__get_auth_header()},))
                                     cancel_response.start()
-                                    cancel_response2.start()
+                                    #cancel_response2.start()
                                     cancel_response.join()
-                                    cancel_response2.join()
+                                    #cancel_response2.join()
                                     print(GLOCAL_RESULT)
-                                    '''
                                     '''
                                     batch_cancel_body = [{'wager_id': x,
                                                           'external_id': external_id} for x in [json.loads(bet_response.content).get('data', {})['wager']['id']]]
@@ -347,6 +347,7 @@ class MMInteractions:
                                     print(cancel_response)
                                     '''
                                 # testing batch place wagers
+                                '''
                                 batch_n = 2
                                 external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
                                 batch_body_to_send = [{
@@ -363,6 +364,7 @@ class MMInteractions:
                                     logging.info("successfully")
                                     for wager in batch_bet_response.json()['data']['succeed_wagers']:
                                         self.wagers[wager['external_id']] = wager['id']
+                                '''
         RUNNING = False
 
     def random_cancel_wager(self):
