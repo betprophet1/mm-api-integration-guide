@@ -284,7 +284,7 @@ class MMInteractions:
                                     bet_response = requests.post(bet_url, json=body_to_send,
                                                                  headers=self.__get_auth_header())
                                     # additional concurrently bets
-                                    concurrent_n = 20
+                                    concurrent_n = 0
                                     for j in range(0):
                                         concurrent_requests = []
                                         for i in range(concurrent_n):
