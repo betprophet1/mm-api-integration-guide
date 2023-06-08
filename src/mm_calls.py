@@ -11,7 +11,8 @@ import uuid
 
 from urllib.parse import urljoin
 # from src import config_staging as config
-from src import config
+from src import config_staging_mmi as config
+# from src import config
 from src.log import logging
 from src import constants
 
@@ -452,10 +453,19 @@ class MMInteractions:
         child_thread.start()
 
     def __get_auth_header(self) -> dict:
-        return {
-            'Authorization': f'Bearer '
-                             f'{self.mm_session["access_token"]}',
-        }
+        if config.IS_INDIVIDUAL:
+            agent_response = requests.get("http://localhost:8080/generate")
+            agent_response_content = json.loads(agent_response.content)
+            return {
+                'Authorization': f'Bearer {self.mm_session["access_token"]}',
+                'X-prophet-auth': agent_response_content['encrypted'],
+                'X-prophet-version': agent_response_content['version']
+            }
+        else:
+            return {
+                'Authorization': f'Bearer '
+                                 f'{self.mm_session["access_token"]}',
+            }
 
     def __get_random_odds(self):
         odds = self.valid_odds[random.randint(0, len(self.valid_odds) - 1)]
