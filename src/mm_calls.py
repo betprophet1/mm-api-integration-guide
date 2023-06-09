@@ -348,7 +348,6 @@ class MMInteractions:
                                     print(cancel_response)
                                     '''
                                 # testing batch place wagers
-                                '''
                                 batch_n = 2
                                 external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
                                 batch_body_to_send = [{
@@ -365,7 +364,6 @@ class MMInteractions:
                                     logging.info("successfully")
                                     for wager in batch_bet_response.json()['data']['succeed_wagers']:
                                         self.wagers[wager['external_id']] = wager['id']
-                                '''
         RUNNING = False
 
     def random_cancel_wager(self):
@@ -458,8 +456,8 @@ class MMInteractions:
             agent_response_content = json.loads(agent_response.content)
             return {
                 'Authorization': f'Bearer {self.mm_session["access_token"]}',
-                'X-prophet-auth': agent_response_content['encrypted'],
-                'X-prophet-version': agent_response_content['version']
+                'X-prophet-auth': agent_response_content['encrypted_string'],
+                'X-prophet-version': agent_response_content['encrypted_version']
             }
         else:
             return {
