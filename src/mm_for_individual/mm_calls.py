@@ -10,7 +10,8 @@ import threading
 import uuid
 
 from urllib.parse import urljoin
-from src.mm_for_individual import config_staging_mmi as config
+# from src.mm_for_individual import config_staging_mmi as config
+from src.mm_for_individual import config
 from src.log import logging
 from src import constants
 
