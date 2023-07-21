@@ -228,12 +228,12 @@ class MMInteractions:
         for key in self.sport_events:
             one_event = self.sport_events[key]
             for market in one_event.get('markets', []):
-                if True: #market['type'] == 'moneyline':
+                if True:
                     # only bet on moneyline
-                    if market['id'] in (251, 256, 258):
-                        continue
+                    # if market['id'] in (251, 256, 258):
+                    #    continue
                     selections = market.get('selections', [])
-                    if random.random() < 0.3:   # 30% chance to bet
+                    if random.random() < 0.2:   # 20% chance to bet
                         if 'market_lines' in market:
                             favorite_lines = [x.get('selections', []) for x in market['market_lines'] if x.get('favourite', False)]
                             if len(favorite_lines) < 1:
@@ -245,7 +245,7 @@ class MMInteractions:
                             #raise Exception(error_code)
                             continue
                         for selection in selections:
-                            if random.random() < 0.3: #30% chance to bet
+                            if random.random() < 0.2: #20% chance to bet
                                 RUNNING = True
                                 picked_selection = 0
                                 odds_to_bet = self.__get_random_odds()
@@ -303,7 +303,11 @@ class MMInteractions:
         batch_cancel_body = [{'wager_id': self.wagers[x],
                               'external_id': x} for x in batch_keys_to_cancel]
         batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
-        response = requests.post(batch_cancel_url, json={'data': batch_cancel_body}, headers=self.__get_auth_header())
+        try:
+            response = requests.post(batch_cancel_url, json={'data': batch_cancel_body}, headers=self.__get_auth_header())
+        except Exception as e:
+            print(e)
+            return
         if response.status_code != 200:
             if response.status_code == 404:
                 logging.info("already cancelled")
@@ -344,8 +348,8 @@ class MMInteractions:
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
-        schedule.every(6).seconds.do(self.start_betting)
-        # schedule.every(9).seconds.do(self.random_cancel_wager)
+        schedule.every(15).seconds.do(self.start_betting)
+        schedule.every(9).seconds.do(self.random_cancel_wager)
         schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
         schedule.every(200).seconds.do(self.seeding)
