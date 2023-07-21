@@ -11,6 +11,7 @@ MM_KEYS = {
 MM_APP_KEY = '30f867796adefdeecb75'
 APP_CLUSTER = 'us2'
 TOURNAMENTS_INTERESTED = user_info_dict['tournaments']
+LOAD_ALL_TOURNAMENTS = user_info_dict['load_all_tournaments']
 
 BASE_URL = 'https://api-sandbox.betprophet.co'
 URL = {

@@ -71,15 +71,20 @@ class MMInteractions:
         headers = self.__get_auth_header()
         all_tournaments_response = requests.get(t_url, headers=headers)
         if all_tournaments_response.status_code != 200:
-            raise Exception("not able to seed tournaments")
+            if len(self.sport_events) == 0:
+                # if seeded before, ignore one time failure
+                raise Exception("not able to seed tournaments")
+            else:
+                return
         all_tournaments = json.loads(all_tournaments_response.content).get('data', {}).get('tournaments', {})
         self.all_tournaments = all_tournaments
 
         # get sportevents and markets of each
         event_url = urljoin(self.base_url, config.URL['mm_events'])
         market_url = urljoin(self.base_url, config.URL['mm_markets'])
+        self.sport_events = dict()
         for one_t in all_tournaments:
-            if one_t['name'] in config.TOURNAMENTS_INTERESTED:
+            if one_t['name'] in config.TOURNAMENTS_INTERESTED or config.LOAD_ALL_TOURNAMENTS:
                 self.my_tournaments[one_t['id']] = one_t
                 events_response = requests.get(event_url, params={'tournament_id': one_t['id']}, headers=headers)
                 if events_response.status_code == 200:
@@ -172,36 +177,6 @@ class MMInteractions:
                     print(f"timestamp - sequence number : {latency} ms")
                     if latency > MAX_LATENCY:
                         MAX_LATENCY = latency
-            x = 1 + 1
-            '''if len(payload) > 0:
-                if 'info' in payload and 'status' in payload['info']:
-                    if payload['info']['status'] == 'open':
-                        external_id = payload['info']['external_id']
-                        wager_id = payload['info']['id']
-                        body = {
-                            'external_id': external_id,
-                            'wager_id': wager_id,
-                        }
-                        cancel_url = urljoin(self.base_url, config.URL['mm_cancel_wager'])
-                        cancel_response = threading.Thread(target=_request_post_star,
-                                                           args=({'url': cancel_url, 'json': body,
-                                                                  'headers': self.__get_auth_header()},))
-                        cancel_response1_1 = threading.Thread(target=_request_post_star,
-                                                           args=({'url': cancel_url, 'json': body,
-                                                                  'headers': self.__get_auth_header()},))
-                        cancel_response2 = threading.Thread(target=_request_post_star,
-                                                            args=({'url': cancel_url, 'json': body,
-                                                                   'headers': self.__get_auth_header()},))
-                        cancel_response2_2 = threading.Thread(target=_request_post_star,
-                                                            args=({'url': cancel_url, 'json': body,
-                                                                   'headers': self.__get_auth_header()},))
-                        cancel_response.start()
-                        cancel_response1_1.start()
-                        cancel_response2.start()
-                        cancel_response2_2.start()
-                        print(GLOCAL_RESULT)
-                print("here")'''
-
             print("processing private, Kwargs:", kwargs)
 
         # We can't subscribe until we've connected, so we use a callback handler
@@ -258,7 +233,7 @@ class MMInteractions:
                     if market['id'] in (251, 256, 258):
                         continue
                     selections = market.get('selections', [])
-                    if random.random() < 0.2:   # 30% chance to bet
+                    if random.random() < 0.3:   # 30% chance to bet
                         if 'market_lines' in market:
                             favorite_lines = [x.get('selections', []) for x in market['market_lines'] if x.get('favourite', False)]
                             if len(favorite_lines) < 1:
@@ -270,7 +245,7 @@ class MMInteractions:
                             #raise Exception(error_code)
                             continue
                         for selection in selections:
-                            if random.random() < 0.2: #30% chance to bet
+                            if random.random() < 0.3: #30% chance to bet
                                 RUNNING = True
                                 picked_selection = 0
                                 odds_to_bet = self.__get_random_odds()
@@ -285,36 +260,6 @@ class MMInteractions:
                                 try:
                                     bet_response = requests.post(bet_url, json=body_to_send,
                                                                  headers=self.__get_auth_header())
-                                    # additional concurrently bets
-                                    concurrent_n = 20
-                                    for j in range(0):
-                                        concurrent_requests = []
-                                        for i in range(concurrent_n):
-                                            external_id = str(uuid.uuid1())
-                                            body_to_send_tmp = {
-                                                'external_id': external_id,
-                                                'line_id': selection[picked_selection]['line_id'],
-                                                'odds': odds_to_bet,
-                                                'stake': 1.0
-                                            }
-                                            concurrent_requests.append(threading.Thread(target=_request_post_star,
-                                                                                        args=({'url': bet_url, 'json': body_to_send_tmp,
-                                                                                               'headers': self.__get_auth_header()},)))
-                                        for c_request in concurrent_requests:
-                                            c_request.start()
-                                        time.sleep(1)
-
-                                    # print(GLOCAL_RESULT)
-                                    # external_id = str(uuid.uuid1())
-                                    # body_to_send = {
-                                    #    'external_id': external_id,
-                                    #    'line_id': selection[picked_selection]['line_id'],
-                                    #    'odds': odds_to_bet,
-                                    #    'stake': 15000.0
-                                    # }
-                                    # bet_response2 = requests.post(bet_url, json=body_to_send,
-                                    #                             headers=self.__get_auth_header())
-                                    # print("testing")
                                 except Exception as e:
                                     logging.warning(e)
                                     continue
@@ -323,51 +268,7 @@ class MMInteractions:
                                 else:
                                     logging.info("successfully")
                                     self.wagers[external_id] = json.loads(bet_response.content).get('data', {})['wager']['id']
-                                    # test cancel wager immediately
 
-                                    body = {
-                                        'external_id': external_id,
-                                        'wager_id': json.loads(bet_response.content).get('data', {})['wager']['id'],
-                                    }
-                                    cancel_url = urljoin(self.base_url, config.URL['mm_cancel_wager'])
-                                    # cancel_response = threading.Thread(target=_request_post_star,
-                                    #                                   args=({'url': cancel_url, 'json': body,
-                                    #                                          'headers': self.__get_auth_header()},))
-                                    # cancel_response2 = threading.Thread(target=_request_post_star,
-                                    #                                    args=({'url': cancel_url, 'json': body,
-                                    #                                          'headers': self.__get_auth_header()},))
-                                    #cancel_response.start()
-                                    #cancel_response2.start()
-                                    #cancel_response.join()
-                                    #cancel_response2.join()
-                                    print(GLOCAL_RESULT)
-                                    '''
-                                    batch_cancel_body = [{'wager_id': x,
-                                                          'external_id': external_id} for x in [json.loads(bet_response.content).get('data', {})['wager']['id']]]
-                                    batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
-                                    cancel_response = requests.post(batch_cancel_url, json={'data': batch_cancel_body},
-                                                             headers=self.__get_auth_header())
-                                    print(cancel_response)
-                                    '''
-                                # testing batch place wagers
-                                '''
-                                batch_n = 2
-                                external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
-                                batch_body_to_send = [{
-                                    'external_id': external_id_batch[x],
-                                    'line_id': selection[picked_selection]['line_id'],
-                                    'odds': odds_to_bet,
-                                    'stake': 1.0
-                                } for x in range(batch_n)]
-                                batch_bet_response = requests.post(batch_bet_url, json={"data": batch_body_to_send},
-                                                                   headers=self.__get_auth_header())
-                                if batch_bet_response.status_code != 200:
-                                    logging.info(f"failed to bet, error {bet_response.content}")
-                                else:
-                                    logging.info("successfully")
-                                    for wager in batch_bet_response.json()['data']['succeed_wagers']:
-                                        self.wagers[wager['external_id']] = wager['id']
-                                '''
         RUNNING = False
 
     def random_cancel_wager(self):
@@ -433,19 +334,21 @@ class MMInteractions:
                                  headers=self.__get_auth_header())
         if response.status_code != 200:
             logging.info("Failed to call refresh endpoint")
+            self.mm_login()
         else:
             self.mm_session['access_token'] = response.json()['data']['access_token']
             if self.pusher is not None:
                 self.pusher.disconnect()
                 self.pusher = None
-            self.subscribe()    # need to subscribe again, as the old access token will expire soon
+            # self.subscribe()    # need to subscribe again, as the old access token will expire soon
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
-        schedule.every(5).seconds.do(self.start_betting)
+        schedule.every(6).seconds.do(self.start_betting)
         # schedule.every(9).seconds.do(self.random_cancel_wager)
-        # schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
+        schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
+        schedule.every(200).seconds.do(self.seeding)
 
         child_thread = threading.Thread(target=self.schedule_in_thread, daemon=False)
         child_thread.start()
