@@ -231,7 +231,7 @@ class MMInteractions:
                 if True:
                     # only bet on moneyline
                     # if market['id'] in (251, 256, 258):
-                    #    continue
+                    #     continue
                     selections = market.get('selections', [])
                     if random.random() < 0.2:   # 20% chance to bet
                         if 'market_lines' in market:
@@ -348,9 +348,9 @@ class MMInteractions:
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
-        schedule.every(15).seconds.do(self.start_betting)
-        schedule.every(9).seconds.do(self.random_cancel_wager)
-        schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
+        schedule.every(30).seconds.do(self.start_betting)
+        # schedule.every(9).seconds.do(self.random_cancel_wager)
+        # schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
         schedule.every(200).seconds.do(self.seeding)
 
