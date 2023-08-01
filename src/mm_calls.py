@@ -14,12 +14,18 @@ from urllib.parse import urljoin
 from src import config
 from src.log import logging
 from src import constants
+from datetime import datetime
+from pytz import timezone
 
 GLOCAL_RESULT = []
 RUNNING = False
 MAX_LATENCY = 0
 def _request_post_star(argdict: dict):
     GLOCAL_RESULT.append(requests.post(**argdict))
+
+def _get_est_time_now():
+    tz = timezone('EST')
+    return datetime.now(tz)
 
 class MMInteractions:
     base_url: str = None
@@ -217,6 +223,10 @@ class MMInteractions:
         logging.info(f"still have ${self.balance} left")
 
     def start_betting(self):
+        current_est_time = _get_est_time_now()
+        if (current_est_time.hour <= 10 and current_est_time.minute <= 30) or (current_est_time.hour > 17):
+            # do not bet between 10:30AM EST and 5:00PM EST
+            return
         global RUNNING
         if RUNNING:
             return
