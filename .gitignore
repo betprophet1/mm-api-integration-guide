@@ -132,3 +132,4 @@ config_staging.py
 config_prod.py
 .DS_Store
 user_prod_info.json
+logs

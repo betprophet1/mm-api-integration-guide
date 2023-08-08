@@ -168,8 +168,13 @@ class MMInteractions:
 
         def public_event_handler(*args, **kwargs):
             print("processing public, Args:", args)
-            print(f"event details {base64.b64decode(json.loads(args[0]).get('payload', '{}'))}")
+            event_received = json.loads(base64.b64decode(json.loads(args[0]).get('payload', '{}')))
+            print(f"event details {event_received}")
             print("processing public, Kwargs:", kwargs)
+            file_name = f"/Users/zhifeng.shi/development/mm-api-integration-guide/logs/{event_received.get('sport_event_id')}.txt"
+            with open(file_name, 'a') as fp:
+                fp.write(f'{args[0]}\n')
+                fp.write(f'{json.dumps(event_received)}\n')
 
         def private_event_handler(*args, **kwargs):
             global MAX_LATENCY
@@ -183,6 +188,8 @@ class MMInteractions:
                     print(f"timestamp - sequence number : {latency} ms")
                     if latency > MAX_LATENCY:
                         MAX_LATENCY = latency
+            elif arg_dict.get('change_type') != 'private_system_signal':
+                print(1)
             print("processing private, Kwargs:", kwargs)
 
         # We can't subscribe until we've connected, so we use a callback handler
