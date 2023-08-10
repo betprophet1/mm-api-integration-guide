@@ -287,7 +287,10 @@ class MMInteractions:
             if self.pusher is not None:
                 self.pusher.disconnect()
                 self.pusher = None
-            self.subscribe()    # need to subscribe again, as the old access token will expire soon
+            self.subscribe()
+            # need to subscribe again, as the old access token will expire soon
+            # in real production implementation you would want to have two separate pusher objects, and subscribe
+            # first before disconnect the other one
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
