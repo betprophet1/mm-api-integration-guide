@@ -277,7 +277,6 @@ class MMInteractions:
             time.sleep(1)
 
     def __auto_extend_session(self):
-        # need to use new api, for now just create new session to pretend session extended
         refresh_url = urljoin(self.base_url, config.URL['mm_refresh'])
         response = requests.post(refresh_url, json={'refresh_token': self.mm_session['refresh_token']},
                                  headers=self.__get_auth_header())
