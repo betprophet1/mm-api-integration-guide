@@ -75,7 +75,14 @@ class MMInteractions:
         logging.info("start seeding tournaments/events/markets")
         t_url = urljoin(self.base_url, config.URL['mm_tournaments'])
         headers = self.__get_auth_header()
-        all_tournaments_response = requests.get(t_url, headers=headers)
+        try:
+            all_tournaments_response = requests.get(t_url, headers=headers)
+        except Exception as e:
+            print(e)
+            if len(self.sport_events) == 0:
+                return
+            else:
+                raise Exception("not able to seed tournaments")
         if all_tournaments_response.status_code != 200:
             if len(self.sport_events) == 0:
                 # if seeded before, ignore one time failure
@@ -92,7 +99,13 @@ class MMInteractions:
         for one_t in all_tournaments:
             if one_t['name'] in config.TOURNAMENTS_INTERESTED or config.LOAD_ALL_TOURNAMENTS:
                 self.my_tournaments[one_t['id']] = one_t
-                events_response = requests.get(event_url, params={'tournament_id': one_t['id']}, headers=headers)
+                try:
+                    events_response = requests.get(event_url, params={'tournament_id': one_t['id']}, headers=headers)
+                except Exception as e:
+                    if len(self.sport_events) == 0:
+                        raise Exception("Error")
+                    else:
+                        continue
                 if events_response.status_code == 200:
                     events = json.loads(events_response.content).get('data', {}).get('sport_events')
                     if events is None:
@@ -171,10 +184,10 @@ class MMInteractions:
             event_received = json.loads(base64.b64decode(json.loads(args[0]).get('payload', '{}')))
             print(f"event details {event_received}")
             print("processing public, Kwargs:", kwargs)
-            file_name = f"/Users/zhifeng.shi/development/mm-api-integration-guide/logs/{event_received.get('sport_event_id')}.txt"
-            with open(file_name, 'a') as fp:
-                fp.write(f'{args[0]}\n')
-                fp.write(f'{json.dumps(event_received)}\n')
+            # file_name = f"/Users/zhifeng.shi/development/mm-api-integration-guide/logs/{event_received.get('sport_event_id')}.txt"
+            # with open(file_name, 'a') as fp:
+            #    fp.write(f'{args[0]}\n')
+            #    fp.write(f'{json.dumps(event_received)}\n')
 
         def private_event_handler(*args, **kwargs):
             global MAX_LATENCY
@@ -268,6 +281,8 @@ class MMInteractions:
                                 odds_to_bet = self.__get_random_odds()
                                 external_id = str(uuid.uuid1())
                                 logging.info(f"going to bet on '{one_event['name']}' on {market['type']}, side {selection[picked_selection]['name']} with odds {odds_to_bet}")
+                                if 'line_id' not in selection[picked_selection]:
+                                    continue
                                 body_to_send = {
                                     'external_id': external_id,
                                     'line_id': selection[picked_selection]['line_id'],
