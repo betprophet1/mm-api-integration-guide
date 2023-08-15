@@ -292,6 +292,8 @@ class MMInteractions:
             # need to subscribe again, as the old access token will expire soon
             # in real production implementation you would want to have two separate pusher objects, and subscribe
             # first before disconnect the other one
+            # or use headersProvider provided by Pushser to auto extend session for you
+            # https://pusher.com/docs/channels/using_channels/connection/#userauthenticationheadersprovider-203052782
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
