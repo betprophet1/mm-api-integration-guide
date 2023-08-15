@@ -1,5 +1,5 @@
 {
-    "access_key": "faf1dac2ca9cc116599b666b89a7b3bb",
-    "secret_key": "92280106f0942fdcb3e46104f90a783c",
+    "access_key": "access_key_of_your_account",
+    "secret_key": "secrete_key_of_your_account",
     "tournaments": ["NBA","College Basketball","NHL", "Premier League", "UEFA Champions League"]
 }

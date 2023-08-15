@@ -40,6 +40,7 @@ class MMInteractions:
         response = requests.post(login_url, data=json.dumps(request_body))
         if response.status_code != 200:
             logging.debug(response)
+            logging.debug("Please check your access key and secrete key to the user_info.json")
             raise Exception("login failed")
         mm_session = json.loads(response.content)['data']
         logging.info(mm_session)
