@@ -279,7 +279,7 @@ class MMInteractions:
             time.sleep(1)
 
     def __auto_extend_session(self):
-        # need to use new api, for now just create new session to pretend session extended
+        # extend the session
         refresh_url = urljoin(self.base_url, config.URL['mm_refresh'])
         response = requests.post(refresh_url, json={'refresh_token': self.mm_session['refresh_token']},
                                  headers=self.__get_auth_header())
@@ -291,6 +291,8 @@ class MMInteractions:
                 self.pusher.disconnect()
                 self.pusher = None
             self.subscribe()    # need to subscribe again, as the old access token will expire soon
+            # or use headersProvider provided by Pushser to auto extend session for you
+            # https://pusher.com/docs/channels/using_channels/connection/#userauthenticationheadersprovider-203052782
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
