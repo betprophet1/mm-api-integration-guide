@@ -28,4 +28,5 @@ URL = {
     'mm_odds_ladder': 'partner/mm/get_odds_ladder',
     'mm_batch_cancel': 'partner/mm/cancel_multiple_wagers',
     'mm_batch_place': 'partner/mm/place_multiple_wagers',
+    'mm_cancel_all_wagers': 'partner/mm/cancel_all_wagers'
 }
