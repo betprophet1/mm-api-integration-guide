@@ -221,6 +221,20 @@ class MMInteractions:
                                     for wager in batch_bet_response.json()['data']['succeed_wagers']:
                                         self.wagers[wager['external_id']] = wager['id']
 
+    def cancel_all_wagers(self):
+        logging.info("CANCELLING ALL WAGERS")
+        cancel_all_url = urljoin(self.base_url, config.URL['mm_cancel_all_wagers'])
+        body = {}
+        response = requests.post(cancel_all_url, json=body, headers=self.__get_auth_header())
+        if response.status_code != 200:
+            if response.status_code == 404:
+                logging.info("already cancelled")
+            else:
+                logging.info("failed to cancel")
+        else:
+            logging.info("cancelled successfully")
+            self.wagers = dict()
+
     def random_cancel_wager(self):
         wager_keys = list(self.wagers.keys())
         for key in wager_keys:
@@ -296,11 +310,12 @@ class MMInteractions:
             # https://pusher.com/docs/channels/using_channels/connection/#userauthenticationheadersprovider-203052782
 
     def auto_betting(self):
-        logging.info("schedule to bet every 10 seconds")
+        logging.info("schedule to bet every 10 seconds!")
         schedule.every(5).seconds.do(self.start_betting)
         schedule.every(9).seconds.do(self.random_cancel_wager)
         schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
+        # schedule.every(60).seconds.do(self.cancel_all_wagers)
 
         child_thread = threading.Thread(target=self.schedule_in_thread, daemon=False)
         child_thread.start()

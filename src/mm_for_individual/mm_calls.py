@@ -270,8 +270,20 @@ class MMInteractions:
                     print(e)
 
     def cancel_all_wagers(self):
-        # TODO: upon urgency, I need to cancel all wagers, how to do it?
-        print("cancel all wagers")
+        logging.info("CANCELLING ALL WAGERS")
+        cancel_all_url = urljoin(self.base_url, config.URL['mm_cancel_all_wagers'])
+        body = {}
+        response = requests.post(cancel_all_url, json=body, headers=self.__get_auth_header())
+        if response.status_code != 200:
+            if response.status_code == 404:
+                logging.info("already cancelled")
+            else:
+                logging.info("failed to cancel")
+        else:
+            logging.info("cancelled successfully")
+            self.wagers = dict()
+
+
 
     def schedule_in_thread(self):
         while True:
@@ -290,13 +302,14 @@ class MMInteractions:
             if self.pusher is not None:
                 self.pusher.disconnect()
                 self.pusher = None
-            self.subscribe()    # need to subscribe again, as the old access token will expire soon
+            self.subscribe()  # need to subscribe again, as the old access token will expire soon
             # or use headersProvider provided by Pushser to auto extend session for you
             # https://pusher.com/docs/channels/using_channels/connection/#userauthenticationheadersprovider-203052782
 
     def auto_betting(self):
-        logging.info("schedule to bet every 10 seconds")
+        logging.info("schedule to bet every 10 seconds!!")
         schedule.every(5).seconds.do(self.start_betting)
+        schedule.every(60).seconds.do(self.cancel_all_wagers)
         schedule.every(9).seconds.do(self.random_cancel_wager)
         schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
@@ -323,6 +336,3 @@ class MMInteractions:
         if odds == -100:
             odds = 100
         return odds
-
-
-
