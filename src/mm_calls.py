@@ -242,6 +242,14 @@ class MMInteractions:
         self.balance = json.loads(response.content).get('data', {}).get('balance', 0)
         logging.info(f"still have ${self.balance} left")
 
+    def cancel_all_wagers(self):
+        cancel_all_url = urljoin(self.base_url, config.URL['mm_cancel_all_wagers'])
+        response = requests.post(cancel_all_url, headers=self.__get_auth_header())
+        if response.status_code != 200:
+            logging.error("failed to cancel all wagers")
+            return False
+        return True
+
     def start_betting(self):
         current_est_time = _get_est_time_now()
         if (current_est_time.hour <= 9 and current_est_time.minute <= 30) or (current_est_time.hour >= 16):
@@ -353,10 +361,6 @@ class MMInteractions:
                     self.wagers.pop(key)
                 except Exception as e:
                     print(e)
-
-    def cancel_all_wagers(self):
-        # TODO: upon urgency, I need to cancel all wagers, how to do it?
-        print("cancel all wagers")
 
     def schedule_in_thread(self):
         while True:
