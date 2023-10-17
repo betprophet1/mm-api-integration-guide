@@ -9,8 +9,8 @@ MM_KEYS = {
 }
 
 IS_INDIVIDUAL = True
-MM_APP_KEY = '06594cdd7452659f5318'
-APP_CLUSTER = 'mt1'
+MM_APP_KEY = '30f867796adefdeecb75'
+APP_CLUSTER = 'us2'
 TOURNAMENTS_INTERESTED = user_info_dict['tournaments']
 
 BASE_URL = 'https://api-sandbox.betprophet.co'
