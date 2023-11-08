@@ -82,12 +82,13 @@ class MMInteractions:
                     if events is None:
                         continue
 
-                    multiple_markets_response = requests.get(multiple_markets_url, params={'event_ids': ','.join([str(event['event_id']) for event in events])},
+                    event_ids = ','.join([str(event['event_id']) for event in events])
+                    multiple_markets_response = requests.get(multiple_markets_url, params={'event_ids': event_ids},
                                                        headers=headers)
                     if multiple_markets_response.status_code == 200:
                         map_market_by_event_id = json.loads(multiple_markets_response.content).get('data', {})
                         for event in events:
-                            event['markets'] = map_market_by_event_id[event['event_id']]
+                            event['markets'] = map_market_by_event_id[str(event['event_id'])]
                             self.sport_events[event['event_id']] = event
                             logging.info(f'successfully get markets of events {event["name"]}')
                     else:
@@ -343,6 +344,3 @@ class MMInteractions:
         if odds == -100:
             odds = 100
         return odds
-
-
-
