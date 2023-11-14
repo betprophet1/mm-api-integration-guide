@@ -72,7 +72,7 @@ class MMInteractions:
 
         # get sportevents and markets of each
         event_url = urljoin(self.base_url, config.URL['mm_events'])
-        market_url = urljoin(self.base_url, config.URL['mm_markets'])
+        multiple_markets_url = urljoin(self.base_url, config.URL['mm_multiple_markets'])
         for one_t in all_tournaments:
             if one_t['name'] in config.TOURNAMENTS_INTERESTED:
                 self.my_tournaments[one_t['id']] = one_t
@@ -81,20 +81,18 @@ class MMInteractions:
                     events = json.loads(events_response.content).get('data', {}).get('sport_events')
                     if events is None:
                         continue
-                    for event in events:
-                        market_response = requests.get(market_url, params={'event_id': event['event_id']},
+
+                    event_ids = ','.join([str(event['event_id']) for event in events])
+                    multiple_markets_response = requests.get(multiple_markets_url, params={'event_ids': event_ids},
                                                        headers=headers)
-                        if market_response.status_code == 200:
-                            markets = json.loads(market_response.content).get('data', {}).get('markets', {})
-                            if markets is None:
-                                # this is more like a bug in MM api, as the event actually already closed
-                                continue
-                            event['markets'] = markets
+                    if multiple_markets_response.status_code == 200:
+                        map_market_by_event_id = json.loads(multiple_markets_response.content).get('data', {})
+                        for event in events:
+                            event['markets'] = map_market_by_event_id[str(event['event_id'])]
                             self.sport_events[event['event_id']] = event
                             logging.info(f'successfully get markets of events {event["name"]}')
-                        else:
-                            logging.info(f'failed to get markets of events {event["name"]},'
-                                         f' error: {market_response.reason}')
+                    else:
+                        logging.info(f'failed to get markets of events ids: {",".join([str(event["event_id"]) for event in events])}')
                 else:
                     logging.info(f'skip tournament {one_t["name"]} as api request failed')
 
@@ -116,13 +114,23 @@ class MMInteractions:
         return channels.get('data', {}).get('authorized_channel', [])
 
     def subscribe(self):
+        key = config.MM_APP_KEY
+        cluster = config.APP_CLUSTER
+        
+        socket_config_url = urljoin(self.base_url, config.URL['websocket_config'])
+        socket_config_response = requests.get(socket_config_url)
+        if socket_config_response.status_code == 200:
+            socket_config = json.loads(socket_config_response.content)
+            key = socket_config.get('key', key)
+            cluster = socket_config.get('cluster', cluster)
+        
         auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
         auth_header = self.__get_auth_header()
         auth_headers = {
                            "Authorization": auth_header['Authorization'],
                            "header-subscriptions": '''[{"type":"tournament","ids":[]}]''',
                        }
-        self.pusher = pysher.Pusher(key=config.MM_APP_KEY, cluster=config.APP_CLUSTER,
+        self.pusher = pysher.Pusher(key=key, cluster=cluster,
                                     auth_endpoint=auth_endpoint_url,
                                     auth_endpoint_headers=auth_headers)
 
@@ -336,6 +344,3 @@ class MMInteractions:
         if odds == -100:
             odds = 100
         return odds
-
-
-
