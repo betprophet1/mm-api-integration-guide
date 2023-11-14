@@ -171,20 +171,37 @@ class MMInteractions:
             client_id=authorization.get('client_id', None),
         )
 
-    async def ably_binding_channels(self):
+    async def ably_binding_private_channels(self):
         if self.websocket_service != 'ably':
             return
-        broadcast_channel_name = ""
         private_channel_name = ""
         private_user_events = []
         for channel in self.available_channels:
-            if 'broadcast' in channel['channel_name']:
-                broadcast_channel_name = channel['channel_name']
-            else:
+            if 'broadcast' not in channel['channel_name']:
                 private_channel_name = channel['channel_name']
                 private_user_events = channel['binding_events']
-        broadcast_channel = self.ably.channels.get(broadcast_channel_name)
         private_channel = self.ably.channels.get(private_channel_name)
+
+        def listener(message):
+            print(
+                f"processing ably message, event {message.name}, change_type {message.data.get('change_type', '')}")
+            print(
+                f"event details {base64.b64decode(message.data.get('payload', '{}'))}")
+            print(f"=========={message.name}:{message.timestamp}==========")
+
+        for private_event in private_user_events:
+            await private_channel.subscribe(private_event['name'], listener)
+            logging.info(
+                f"subscribed to private channels {private_event['name']}, successfully")
+
+    async def ably_binding_private_broadcast_channels(self):
+        if self.websocket_service != 'ably':
+            return
+        broadcast_channel_name = ""
+        for channel in self.available_channels:
+            if 'broadcast' in channel['channel_name']:
+                broadcast_channel_name = channel['channel_name']
+        broadcast_channel = self.ably.channels.get(broadcast_channel_name)
 
         def listener(message):
             print(
@@ -198,11 +215,6 @@ class MMInteractions:
             await broadcast_channel.subscribe(event_name, listener)
             logging.info(
                 f"subscribed to private broadcast channels {event_name}, successfully")
-
-        for private_event in private_user_events:
-            await private_channel.subscribe(private_event['name'], listener)
-            logging.info(
-                f"subscribed to private channels {private_event['name']}, successfully")
 
     async def subscribe(self):
         if self.websocket_service == 'ably':

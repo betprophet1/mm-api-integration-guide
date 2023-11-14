@@ -10,8 +10,9 @@ async def main():
     mm_instance.mm_login()
     mm_instance.get_balance()
     await mm_instance.subscribe()
-    await mm_instance.ably_binding_channels()  # for ably only
+    await mm_instance.ably_binding_private_channels()  # for ably only
     mm_instance.seeding()
+    await mm_instance.ably_binding_private_broadcast_channels()  # for ably only
     mm_instance.auto_betting()
     await mm_instance.keep_alive()
 
