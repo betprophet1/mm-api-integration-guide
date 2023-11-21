@@ -31,16 +31,15 @@ class MMInteractions:
     wagers: dict = dict()    # all wagers bet in the session
     valid_odds: list = []
     websocket_service: str = ""
-    pusher = None
+    pusher: pysher.Pusher = None
 
     # ably things
     ably: AblyRealtime = None
     available_channels: list = []
 
-    def __init__(self, websocket_service: str = 'pusher'):
+    def __init__(self):
         self.base_url = config.BASE_URL
         self.mm_keys = config.MM_KEYS
-        self.websocket_service = websocket_service
 
     def mm_login(self) -> dict:
         login_url = urljoin(self.base_url, config.URL['mm_login'])
@@ -138,13 +137,15 @@ class MMInteractions:
         return channels.get('data', {}).get('authorized_channel', [])
 
     def get_connection_config(self):
+        headers = self.__get_auth_header()
         connection_config_url = urljoin(
             self.base_url, config.URL['mm_connection_config'])
-        response = requests.get(connection_config_url)
+        response = requests.get(connection_config_url, headers=headers)
         if response.status_code != 200:
-            logging.error("failed to get connection config")
+            logging.error(
+                f"failed to get connection config")
             raise Exception("failed to get connection config")
-        return response.json()['data']
+        return response.json()
 
     async def ably_auth_callback(self, token_params) -> TokenDetails:
         auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
@@ -153,13 +154,13 @@ class MMInteractions:
                                  data={'subscriptions': [
                                      {'type': 'tournament', 'ids': []}]},
                                  headers=headers)
-        jsonBody = response.json()
+        json_body = response.json()
         if response.status_code != 200:
             logging.error(
-                f"failed to register {response.status_code} {jsonBody}")
+                f"failed to register {response.status_code} {json_body}")
             raise Exception("failed to register")
 
-        data = jsonBody.get('data', {})
+        data = json_body.get('data', {})
         self.available_channels = data.get('authorized_channel', [])
         authorization = data.get('authorization', {})
         logging.info(f"successfully registered, {authorization}")
@@ -217,24 +218,33 @@ class MMInteractions:
                 f"subscribed to private broadcast channels {event_name}, successfully")
 
     async def subscribe(self):
+        connection_config = self.get_connection_config()
+        self.websocket_service = connection_config.get("service", "")
         if self.websocket_service == 'ably':
+            if self.pusher is not None:
+                self.pusher.disconnect()
+                self.pusher = None
             if self.ably is not None:
-                # do nothing if already connected
+                # do nothing we already connected
                 return
             self.ably = AblyRealtime(
                 auth_callback=self.ably_auth_callback, auto_connect=False)
             self.ably.connect()
             await self.ably.connection.once_async(ConnectionState.CONNECTED)
             logging.info("successfully connected to ably")
-
-        else:
+            await self.ably_binding_private_channels()
+            await self.ably_binding_private_broadcast_channels()
+        elif self.websocket_service == 'pusher':
+            if self.ably is not None:
+                await self.ably.connection.close()
+                self.ably = None
             auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
             auth_header = self.__get_auth_header()
             auth_headers = {
                 "Authorization": auth_header['Authorization'],
                 "header-subscriptions": '''[{"type":"tournament","ids":[]}]''',
             }
-            self.pusher = pysher.Pusher(key=config.MM_APP_KEY, cluster=config.APP_CLUSTER,
+            self.pusher = pysher.Pusher(key=connection_config.get("key", ""), cluster=connection_config.get("cluster", ""),
                                         auth_endpoint=auth_endpoint_url,
                                         auth_endpoint_headers=auth_headers)
 
