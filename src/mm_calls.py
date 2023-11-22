@@ -151,8 +151,10 @@ class MMInteractions:
         auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
         headers = self.__get_auth_header()
         response = requests.post(auth_endpoint_url,
-                                 data={'subscriptions': [
-                                     {'type': 'tournament', 'ids': []}]},
+                                 data={
+                                     'service': 'ably',
+                                     'subscriptions': [
+                                         {'type': 'tournament', 'ids': []}]},
                                  headers=headers)
         json_body = response.json()
         if response.status_code != 200:
