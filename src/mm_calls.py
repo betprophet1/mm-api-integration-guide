@@ -340,6 +340,8 @@ class MMInteractions:
     def random_batch_cancel_wagers(self):
         wager_keys = list(self.wagers.keys())
         batch_keys_to_cancel = random.choices(wager_keys, k=min(4, len(wager_keys)))
+        if len(batch_keys_to_cancel) == 0:
+            return
         batch_cancel_body = [{'wager_id': self.wagers[x],
                               'external_id': x} for x in batch_keys_to_cancel]
         batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
@@ -386,7 +388,7 @@ class MMInteractions:
         logging.info("schedule to bet every 10 seconds")
         schedule.every(30).seconds.do(self.start_betting)
         # schedule.every(9).seconds.do(self.random_cancel_wager)
-        # schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
+        schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
         schedule.every(200).seconds.do(self.seeding)
 
