@@ -147,6 +147,9 @@ class MMInteractions:
                         if 'selections' not in market_line or len(market_line['selections']) == 0:
                             raise Exception(f'selections is empty')
                         for selection in market_line['selections']:
+                            if len(selection) < 1:
+                                #TODO: need to make sure we never get here
+                                continue
                             if selection[0].get('line_id', None) is None:
                                 raise Exception(f'line_id is empty for event {key}')
                             print(selection[0]['line_id'])
@@ -288,6 +291,9 @@ class MMInteractions:
                                 picked_selection = 0
                                 odds_to_bet = self.__get_random_odds()
                                 external_id = str(uuid.uuid1())
+                                if len(selection) < 1:
+                                    #TODO: this is something we need to verify
+                                    continue
                                 logging.info(f"going to bet on '{one_event['name']}' on {market['type']}, side {selection[picked_selection]['name']} with odds {odds_to_bet}")
                                 if 'line_id' not in selection[picked_selection]:
                                     continue
