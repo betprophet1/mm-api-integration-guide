@@ -147,8 +147,11 @@ class MMInteractions:
                         if 'selections' not in market_line or len(market_line['selections']) == 0:
                             raise Exception(f'selections is empty')
                         for selection in market_line['selections']:
+                            if len(selection) == 0:
+                                #TODO: look into it
+                                continue
                             if selection[0].get('line_id', None) is None:
-                                raise Exception(f'line_id is empty for event {key}')
+                                print(f'line_id is empty for event {key}')
                             print(selection[0]['line_id'])
                 else:
                     #raise Exception("no selection, no market_lines")
@@ -271,7 +274,7 @@ class MMInteractions:
                     # if market['id'] in (251, 256, 258):
                     #     continue
                     selections = market.get('selections', [])
-                    if random.random() < 0.2:   # 20% chance to bet
+                    if random.random() < 0.6:   # 20% chance to bet
                         if 'market_lines' in market:
                             favorite_lines = [x.get('selections', []) for x in market['market_lines'] if x.get('favourite', False)]
                             if len(favorite_lines) < 1:
@@ -283,11 +286,14 @@ class MMInteractions:
                             #raise Exception(error_code)
                             continue
                         for selection in selections:
-                            if random.random() < 0.2: #20% chance to bet
+                            if random.random() < 0.6: #20% chance to bet
                                 RUNNING = True
                                 picked_selection = 0
                                 odds_to_bet = self.__get_random_odds()
                                 external_id = str(uuid.uuid1())
+                                if len(selection) == 0:
+                                    #TODO: need to know why it gets here
+                                    continue
                                 logging.info(f"going to bet on '{one_event['name']}' on {market['type']}, side {selection[picked_selection]['name']} with odds {odds_to_bet}")
                                 if 'line_id' not in selection[picked_selection]:
                                     continue
@@ -386,11 +392,12 @@ class MMInteractions:
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
-        schedule.every(30).seconds.do(self.start_betting)
+        schedule.every(10).seconds.do(self.start_betting)
         # schedule.every(9).seconds.do(self.random_cancel_wager)
         schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
-        schedule.every(200).seconds.do(self.seeding)
+        schedule.every(3).minutes.do(self.cancel_all_wagers)
+        # schedule.every(200).seconds.do(self.seeding)
 
         child_thread = threading.Thread(target=self.schedule_in_thread, daemon=False)
         child_thread.start()
