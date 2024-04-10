@@ -11,7 +11,7 @@ import uuid
 
 from urllib.parse import urljoin
 # from src import config_staging as config
-from src import config_staging as config
+from src import config
 from src.log import logging
 from src import constants
 from datetime import datetime

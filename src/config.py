@@ -13,7 +13,7 @@ APP_CLUSTER = 'us3'
 TOURNAMENTS_INTERESTED = user_info_dict['tournaments']
 LOAD_ALL_TOURNAMENTS = user_info_dict['load_all_tournaments']
 
-BASE_URL = 'https://api-sandbox.betprophet.co'
+BASE_URL = 'https://api-ss-sandbox.betprophet.co'
 URL = {
     'mm_login': 'partner/auth/login',
     'mm_refresh': 'partner/auth/refresh',
