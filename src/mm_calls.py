@@ -253,6 +253,13 @@ class MMInteractions:
             return False
         return True
 
+    def make_a_post_request(self, url, json_arg, sleep_time_s=0):
+        time.sleep(sleep_time_s)
+        result = requests.post(url, json={"data": json_arg},
+                                        headers=self.__get_auth_header())
+        print(f'time: {time.time()}')
+        return result
+
     def start_betting(self):
         current_est_time = _get_est_time_now()
         if (current_est_time.hour <= 9 and current_est_time.minute <= 30) or (current_est_time.hour >= 16):
@@ -303,17 +310,55 @@ class MMInteractions:
                                     'odds': odds_to_bet,
                                     'stake': 1.0
                                 }
+                                batch_size = 20
+                                batch_external_ids = [str(uuid.uuid1()) for i in range(batch_size)]
+                                batch_request_to_send = [
+                                    {'external_id': one_tmp_id,
+                                    'line_id': selection[picked_selection]['line_id'],
+                                    'odds':  self.__get_random_odds(),
+                                    'stake': 1.0} for one_tmp_id in batch_external_ids]
+
+                                batch_cancel_body = [
+                                    {'wager_id': f'partner_06231200-4847-41db-9b5a-454015e1f179_{x}',
+                                     'external_id': x} for x in batch_external_ids]
+                                batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
                                 try:
-                                    bet_response = requests.post(bet_url, json=body_to_send,
-                                                                 headers=self.__get_auth_header())
+                                    # bet_response = requests.post(bet_url, json=body_to_send,
+                                    #                             headers=self.__get_auth_header())
+                                    # bet_response = requests.post(batch_bet_url, json={"data": batch_request_to_send},
+                                    #                             headers=self.__get_auth_header())
+
+                                    thread1 = threading.Thread(target=self.make_a_post_request, args=(batch_bet_url, batch_request_to_send))
+                                    thread2 = threading.Thread(target=self.make_a_post_request, args=(batch_cancel_url, batch_cancel_body, 0.1))
+
+                                    # Start the threads
+                                    thread2.start()
+                                    thread1.start()
+
+                                    # Wait for threads to finish (optional)
+                                    thread1.join()
+                                    thread2.join()
                                 except Exception as e:
                                     logging.warning(e)
                                     continue
-                                if bet_response.status_code != 200:
-                                    logging.info(f"failed to bet, error {bet_response.content}")
-                                else:
-                                    logging.info("successfully")
-                                    self.wagers[external_id] = json.loads(bet_response.content).get('data', {})['wager']['id']
+                                #if bet_response.status_code != 200:
+                                #    logging.info(f"failed to bet, error {bet_response.content}")
+                                #else:
+                                #    logging.info("successfully")
+                                #    all_wagers_placed = json.loads(bet_response.content)['data']['succeed_wagers']
+                                #    batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
+                                #    batch_cancel_body = [{'wager_id': f'partner_06231200-4847-41db-9b5a-454015e1f179_{x["external_id"]}',
+                                #                          'external_id': x['external_id']} for x in all_wagers_placed]
+                                    # try:
+                                    #    cancel_response = requests.post(batch_cancel_url, json={'data': batch_cancel_body},
+                                    #                             headers=self.__get_auth_header())
+                                    #except Exception as e:
+                                    #    print(e)
+                                    #    return
+                                    #if cancel_response.status_code != 200:
+                                    #    logging.info(f"failed to bet, error {cancel_response.content}")
+                                print(1)
+                                    # self.wagers[external_id] = json.loads(bet_response.content).get('data', {})['wager']['id']
 
         RUNNING = False
 
