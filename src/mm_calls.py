@@ -403,7 +403,7 @@ class MMInteractions:
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
-        schedule.every(30).seconds.do(self.start_betting)
+        schedule.every(20).seconds.do(self.start_betting)
         # schedule.every(9).seconds.do(self.random_cancel_wager)
         schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
