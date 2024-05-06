@@ -171,14 +171,25 @@ class MMInteractions:
             raise Exception("failed to get channels")
         channels = channels_response.json()
         return channels.get('data', {}).get('authorized_channel', [])
+
+    def _get_connection_config(self):
+        connection_config_url = urljoin(self.base_url, config.URL['mm_connection_config'])
+        connection_response = requests.get(connection_config_url, headers=self.__get_auth_header())
+        if connection_response.status_code != 200:
+            logging.error("failed to get connection configs")
+            raise Exception("failed to get channels")
+        conn_configs = connection_response.json()
+        return conn_configs
+
     def subscribe(self):
+        connection_configs = self._get_connection_config()
         auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
         auth_header = self.__get_auth_header()
         auth_headers = {
                            "Authorization": auth_header['Authorization'],
                            "header-subscriptions": '''[{"type":"tournament","ids":[]}]''',
                        }
-        self.pusher = pysher.Pusher(key=config.MM_APP_KEY, cluster=config.APP_CLUSTER,
+        self.pusher = pysher.Pusher(key=connection_configs['key'], cluster=connection_configs['cluster'],
                                     auth_endpoint=auth_endpoint_url,
                                     auth_endpoint_headers=auth_headers)
 
