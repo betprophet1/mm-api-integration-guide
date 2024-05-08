@@ -285,7 +285,7 @@ class MMInteractions:
                     # if market['id'] in (251, 256, 258):
                     #     continue
                     selections = market.get('selections', [])
-                    if random.random() < 0.2:   # 20% chance to bet
+                    if random.random() < 0.4:   # 20% chance to bet
                         if 'market_lines' in market:
                             favorite_lines = [x.get('selections', []) for x in market['market_lines'] if x.get('favourite', False)]
                             if len(favorite_lines) < 1:
@@ -297,7 +297,7 @@ class MMInteractions:
                             #raise Exception(error_code)
                             continue
                         for selection in selections:
-                            if random.random() < 0.2: #20% chance to bet
+                            if random.random() < 0.4: #20% chance to bet
                                 RUNNING = True
                                 picked_selection = 0
                                 odds_to_bet = self.__get_random_odds()
@@ -312,7 +312,7 @@ class MMInteractions:
                                     'external_id': external_id,
                                     'line_id': selection[picked_selection]['line_id'],
                                     'odds': odds_to_bet,
-                                    'stake': 1.0
+                                    'stake': 5.0
                                 }
                                 try:
                                     bet_response = requests.post(bet_url, json=body_to_send,
