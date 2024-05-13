@@ -266,9 +266,9 @@ class MMInteractions:
 
     def start_betting(self):
         current_est_time = _get_est_time_now()
-        if (current_est_time.hour <= 9 and current_est_time.minute <= 30) or (current_est_time.hour >= 16):
+        #if (current_est_time.hour <= 9 and current_est_time.minute <= 30) or (current_est_time.hour >= 16):
             # do not bet between 10:30AM EST and 5:00PM EST
-            return
+        #    return
         global RUNNING
         if RUNNING:
             return
