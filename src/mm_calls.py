@@ -113,16 +113,19 @@ class MMInteractions:
         channels = channels_response.json()
         return channels.get('data', {}).get('authorized_channel', [])
 
+    def _get_connection_config(self):
+        connection_config_url = urljoin(self.base_url, config.URL['websocket_config'])
+        connection_response = requests.get(connection_config_url, headers=self.__get_auth_header())
+        if connection_response.status_code != 200:
+            logging.error("failed to get connection configs")
+            raise Exception("failed to get channels")
+        conn_configs = connection_response.json()
+        return conn_configs
+
     def subscribe(self):
-        key = config.MM_APP_KEY
-        cluster = config.APP_CLUSTER
-        
-        socket_config_url = urljoin(self.base_url, config.URL['websocket_config'])
-        socket_config_response = requests.get(socket_config_url)
-        if socket_config_response.status_code == 200:
-            socket_config = json.loads(socket_config_response.content)
-            key = socket_config.get('key', key)
-            cluster = socket_config.get('cluster', cluster)
+        connection_config = self._get_connection_config()  # not working yet, getting wrong config
+        key = connection_config['key']
+        cluster = connection_config['cluster']
         
         auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
         auth_header = self.__get_auth_header()

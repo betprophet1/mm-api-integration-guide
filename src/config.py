@@ -8,11 +8,9 @@ MM_KEYS = {
     'secret_key': user_info_dict['secret_key'],
 }
 
-MM_APP_KEY = 'fbee25a22558ebef3c04'
-APP_CLUSTER = 'us3'
 TOURNAMENTS_INTERESTED = user_info_dict['tournaments']
 
-BASE_URL = 'https://api-sandbox.betprophet.co'
+BASE_URL = 'https://api-ss-sandbox.betprophet.co'
 URL = {
     'mm_login': 'partner/auth/login',
     'mm_refresh': 'partner/auth/refresh',
@@ -29,5 +27,5 @@ URL = {
     'mm_batch_cancel': 'partner/mm/cancel_multiple_wagers',
     'mm_batch_place': 'partner/mm/place_multiple_wagers',
     'mm_cancel_all_wagers': 'partner/mm/cancel_all_wagers',
-    'websocket_config': '/websocket/connection-config',
+    'websocket_config': 'partner/websocket/connection-config',
 }
