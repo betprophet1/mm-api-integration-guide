@@ -103,7 +103,6 @@ class MMInteractions:
     def _get_channels(self, socket_id: float):
         # get websocket channels to subscribe to
         auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
-        # auth_endpoint_url = "http://localhost:19002/api/v1/mm/pusher"
         channels_response = requests.post(auth_endpoint_url,
                                           data={'socket_id': socket_id},
                                           headers=self.__get_auth_header())
