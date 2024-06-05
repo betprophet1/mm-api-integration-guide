@@ -32,6 +32,9 @@ class MMInteractions:
         self.mm_keys = config.MM_KEYS
 
     def mm_login(self) -> dict:
+        """'
+        Login to MM API, and store session keys in self.mm_session
+        """
         login_url = urljoin(self.base_url, config.URL['mm_login'])
         request_body = {
             'access_key': self.mm_keys.get('access_key'),
@@ -49,8 +52,12 @@ class MMInteractions:
         return mm_session
 
     def seeding(self):
-        # get allowed odds
-        logging.info("start to get allowed odds")
+        """
+        1. Get odds ladder, as only wagers having odds in the odds ladder are allowed.
+        2. Get all tournaments/events and markets details of each event.
+        :return:
+        """
+        logging.info("start to get odds ladder")
         odds_ladder_url = urljoin(self.base_url, config.URL['mm_odds_ladder'])
         odds_response = requests.get(odds_ladder_url, headers=self.__get_auth_header())
         if odds_response.status_code != 200:
@@ -70,7 +77,7 @@ class MMInteractions:
         all_tournaments = json.loads(all_tournaments_response.content).get('data', {}).get('tournaments', {})
         self.all_tournaments = all_tournaments
 
-        # get sportevents and markets of each
+        # get sport events and markets of each event
         event_url = urljoin(self.base_url, config.URL['mm_events'])
         multiple_markets_url = urljoin(self.base_url, config.URL['mm_multiple_markets'])
         for one_t in all_tournaments:
@@ -83,6 +90,8 @@ class MMInteractions:
                         continue
 
                     event_ids = ','.join([str(event['event_id']) for event in events])
+                    # instead of getting markets of one event at a time,
+                    # using get_multiple_markets to batch get markets of a list of events
                     multiple_markets_response = requests.get(multiple_markets_url, params={'event_ids': event_ids},
                                                        headers=headers)
                     if multiple_markets_response.status_code == 200:
@@ -101,7 +110,10 @@ class MMInteractions:
                      f"sport events from {len(config.TOURNAMENTS_INTERESTED)} tournaments")
 
     def _get_channels(self, socket_id: float):
-        # get websocket channels to subscribe to
+        """
+        Get a list of all channels and topics of each channel that you are allowing to subscribe to.
+        Even though there are public and private channels, but the channel id is unique for each API user.
+        """
         auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
         channels_response = requests.post(auth_endpoint_url,
                                           data={'socket_id': socket_id},
@@ -113,6 +125,20 @@ class MMInteractions:
         return channels.get('data', {}).get('authorized_channel', [])
 
     def _get_connection_config(self):
+        """
+        Get websocket connection configurations. We are using Pusher as our websocket service,
+        and only authenticated channels are used.
+        More details can be found in https://pusher.com/docs/channels/using_channels/user-authentication/.
+
+        The connection configuration is designed for stability and infrequent updates.
+        However, in the unlikely event of a Pusher cluster incident,
+        we will proactively migrate to a new cluster to ensure uninterrupted service.
+
+        To maintain optimal connectivity, we recommend users retrieve the latest connection configuration
+        at least once every thirty minutes. If the retrieved configuration remains unchanged,
+         no further action is required. In the event of a new configuration being discovered,
+         users should update their connection accordingly.
+        """
         connection_config_url = urljoin(self.base_url, config.URL['websocket_config'])
         connection_response = requests.get(connection_config_url, headers=self.__get_auth_header())
         if connection_response.status_code != 200:
@@ -122,6 +148,13 @@ class MMInteractions:
         return conn_configs
 
     def subscribe(self):
+        """
+        1. get Pusher connection configurations
+        2. connect to Pusher websocket service by providing authentication credentials
+        3. waiting for the websocket connection successful handshake and then execute connect_handler in the callback
+        4. subscribe to public channels on selected topics
+        5. subscribe to private channels on all topics
+        """
         connection_config = self._get_connection_config()  # not working yet, getting wrong config
         key = connection_config['key']
         cluster = connection_config['cluster']
@@ -184,6 +217,11 @@ class MMInteractions:
         logging.info(f"still have ${self.balance} left")
 
     def start_betting(self):
+        """
+        Example on how to place wagers using single wager placement restufl api, place_wager,
+         also batch wager placement restfu api place_multiple_wagers
+        :return: Wager ids returned from the api are stored in a class object for wager cancellation example
+        """
         logging.info("Start betting, randomly :)")
         bet_url = urljoin(self.base_url, config.URL['mm_place_wager'])
         batch_bet_url = urljoin(self.base_url, config.URL['mm_batch_place'])
@@ -232,6 +270,12 @@ class MMInteractions:
                                         self.wagers[wager['external_id']] = wager['id']
 
     def cancel_all_wagers(self):
+        """
+        Upon the event your side needs to hit a panic button and cancel all your open wagers,
+         this api will help cancel all wagers without needing to providing individual wager ids.
+        Only wagers placed prio this api call are cancelled, all new wagers after this call are not impacted.
+        :return:
+        """
         logging.info("CANCELLING ALL WAGERS")
         cancel_all_url = urljoin(self.base_url, config.URL['mm_cancel_all_wagers'])
         body = {}
@@ -246,6 +290,10 @@ class MMInteractions:
             self.wagers = dict()
 
     def random_cancel_wager(self):
+        """
+        Example on how to cancel a single wager using cancel_wager endpoint
+        :return:
+        """
         wager_keys = list(self.wagers.keys())
         for key in wager_keys:
             if key not in self.wagers:
@@ -272,6 +320,10 @@ class MMInteractions:
                     self.wagers.pop(key)
 
     def random_batch_cancel_wagers(self):
+        """
+        example on how to cancel a batch of wagers using cancel_multiple_wagers
+        :return:
+        """
         wager_keys = list(self.wagers.keys())
         batch_keys_to_cancel = random.choices(wager_keys, k=min(4, len(wager_keys)))
         batch_cancel_body = [{'wager_id': self.wagers[x],
@@ -292,16 +344,27 @@ class MMInteractions:
                 except Exception as e:
                     print(e)
 
-    def cancel_all_wagers(self):
-        # TODO: upon urgency, I need to cancel all wagers, how to do it?
-        print("cancel all wagers")
-
-    def schedule_in_thread(self):
+    def __run_forever_in_thread(self):
         while True:
             schedule.run_pending()
             time.sleep(1)
 
     def __auto_extend_session(self):
+        """
+         Renew the access token and reconnect the websocket.
+         Security: To safeguard user sessions and system integrity,
+                   access tokens are issued with a 20-minute expiration time.
+         Continuous Connectivity: To ensure uninterrupted communication, a new access token can be obtained by
+                                   utilizing the provided refresh token before the current token expires.
+         Pusher Connection Handling Strategies:
+            Automated Session Extension: For enhanced convenience, Pusher offers a headersProvider function
+                      that automatically manages session extension for you.
+                      Refer to the official documentation for details: https://pusher.com/docs/channels/using_channels/user-authentication/
+            Dual Pusher Object Approach: Alternatively, you can implement a strategy utilizing two separate Pusher objects.
+                 Before disconnecting the object associated with the expiring access token,
+                 subscribe to the desired channels using a new Pusher object with the freshly acquired access token.
+        :return:
+        """
         refresh_url = urljoin(self.base_url, config.URL['mm_refresh'])
         response = requests.post(refresh_url, json={'refresh_token': self.mm_session['refresh_token']},
                                  headers=self.__get_auth_header())
@@ -313,25 +376,20 @@ class MMInteractions:
                 self.pusher.disconnect()
                 self.pusher = None
             self.subscribe()
-            # need to subscribe again, as the old access token will expire soon
-            # in real production implementation you would want to have two separate pusher objects, and subscribe
-            # first before disconnect the other one
-            # or use headersProvider provided by Pushser to auto extend session for you
-            # https://pusher.com/docs/channels/using_channels/connection/#userauthenticationheadersprovider-203052782
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds!")
-        schedule.every(5).seconds.do(self.start_betting)
+        schedule.every(10).seconds.do(self.start_betting)
         schedule.every(9).seconds.do(self.random_cancel_wager)
         schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
         # schedule.every(60).seconds.do(self.cancel_all_wagers)
 
-        child_thread = threading.Thread(target=self.schedule_in_thread, daemon=False)
+        child_thread = threading.Thread(target=self.__run_forever_in_thread, daemon=False)
         child_thread.start()
 
     def keep_alive(self):
-        child_thread = threading.Thread(target=self.schedule_in_thread, daemon=False)
+        child_thread = threading.Thread(target=self.__run_forever_in_thread, daemon=False)
         child_thread.start()
 
     def __get_auth_header(self) -> dict:
