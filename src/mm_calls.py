@@ -97,6 +97,9 @@ class MMInteractions:
                     if multiple_markets_response.status_code == 200:
                         map_market_by_event_id = json.loads(multiple_markets_response.content).get('data', {})
                         for event in events:
+                            if str(event['event_id']) not in map_market_by_event_id:
+                                # this should not happen, mostly a bug
+                                continue
                             event['markets'] = map_market_by_event_id[str(event['event_id'])]
                             self.sport_events[event['event_id']] = event
                             logging.info(f'successfully get markets of events {event["name"]}')
