@@ -325,6 +325,38 @@ class MMInteractions:
                                 else:
                                     logging.info("successfully")
                                     self.wagers[external_id] = json.loads(bet_response.content).get('data', {})['wager']['id']
+                                # testing batch place wagers
+                                '''batch_n = 10
+                                external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
+                                batch_body_to_send = [{
+                                    'external_id': external_id_batch[x],
+                                    'line_id': selection[0]['line_id'],
+                                    'odds': odds_to_bet,
+                                    'stake': 100.0
+                                } for x in range(batch_n)]
+                                batch_bet_response = requests.post(batch_bet_url, json={"data": batch_body_to_send},
+                                                                   headers=self.__get_auth_header())
+                                if batch_bet_response.status_code != 200:
+                                    logging.info(f"failed to bet, error {batch_bet_response.content}")
+                                else:
+                                    logging.info("successfully")
+                                    for wager in batch_bet_response.json()['data']['succeed_wagers']:
+                                        self.wagers[wager['external_id']] = wager['id']
+
+                                # immediately batch cancel to make sure money return as expected
+                                batch_wagers_response = json.loads(batch_bet_response.content)
+                                batch_keys_to_cancel = [x['external_id'] for x in
+                                                        batch_wagers_response.get('data', {}).get('succeed_wagers', [])]
+                                batch_cancel_body = [{'wager_id': self.wagers[x],
+                                                      'external_id': x} for x in batch_keys_to_cancel]
+                                batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
+                                try:
+                                    response = requests.post(batch_cancel_url, json={'data': batch_cancel_body},
+                                                             headers=self.__get_auth_header())
+                                except Exception as e:
+                                    print(e)
+                                    return
+                                print(f"cancelled all {batch_n} wagers placed")'''
 
         RUNNING = False
 
