@@ -23,7 +23,7 @@ class MMInteractions:
     all_tournaments: dict = dict()    # mapping from string to id
     my_tournaments: dict = dict()
     sport_events: dict = dict()   # key is event id, value is a list of event details and markets
-    wagers: dict = dict()    # all wagers bet in the session
+    wagers: dict = dict()    # all wagers played in the session
     valid_odds: list = []
     pusher = None
 
@@ -219,57 +219,57 @@ class MMInteractions:
         self.balance = json.loads(response.content).get('data', {}).get('balance', 0)
         logging.info(f"still have ${self.balance} left")
 
-    def start_betting(self):
+    def start_playing(self):
         """
         Example on how to place wagers using single wager placement restufl api, place_wager,
          also batch wager placement restfu api place_multiple_wagers
         :return: Wager ids returned from the api are stored in a class object for wager cancellation example
         """
-        logging.info("Start betting, randomly :)")
-        bet_url = urljoin(self.base_url, config.URL['mm_place_wager'])
-        batch_bet_url = urljoin(self.base_url, config.URL['mm_batch_place'])
-        if '.prophetbettingexchange' in bet_url:
+        logging.info("Start playing, randomly :)")
+        play_url = urljoin(self.base_url, config.URL['mm_place_wager'])
+        batch_play_url = urljoin(self.base_url, config.URL['mm_batch_place'])
+        if '.prophetx.co' in play_url:
             raise Exception("only allowed to run in non production environment")
         for key in self.sport_events:
             one_event = self.sport_events[key]
             for market in one_event.get('markets', []):
                 if market['type'] == 'moneyline':
-                    # only bet on moneyline
-                    if random.random() < 0.3:   # 30% chance to bet
+                    # only play on moneyline
+                    if random.random() < 0.3:   # 30% chance to play
                         for selection in market.get('selections', []):
-                            if random.random() < 0.3: #30% chance to bet
-                                odds_to_bet = self.__get_random_odds()
+                            if random.random() < 0.3: #30% chance to play
+                                odds_to_play = self.__get_random_odds()
                                 external_id = str(uuid.uuid1())
-                                logging.info(f"going to bet on '{one_event['name']}' on moneyline, side {selection[0]['name']} with odds {odds_to_bet}")
+                                logging.info(f"going to play on '{one_event['name']}' on moneyline, side {selection[0]['name']} with odds {odds_to_play}")
                                 body_to_send = {
                                     'external_id': external_id,
                                     'line_id': selection[0]['line_id'],
-                                    'odds': odds_to_bet,
+                                    'odds': odds_to_play,
                                     'stake': 1.0
                                 }
-                                bet_response = requests.post(bet_url, json=body_to_send,
+                                play_response = requests.post(play_url, json=body_to_send,
                                                              headers=self.__get_auth_header())
-                                if bet_response.status_code != 200:
-                                    logging.info(f"failed to bet, error {bet_response.content}")
+                                if play_response.status_code != 200:
+                                    logging.info(f"failed to play, error {play_response.content}")
                                 else:
                                     logging.info("successfully")
-                                    self.wagers[external_id] = json.loads(bet_response.content).get('data', {})['wager']['id']
+                                    self.wagers[external_id] = json.loads(play_response.content).get('data', {})['wager']['id']
                                 # testing batch place wagers
                                 batch_n = 3
                                 external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
                                 batch_body_to_send = [{
                                     'external_id': external_id_batch[x],
                                     'line_id': selection[0]['line_id'],
-                                    'odds': odds_to_bet,
+                                    'odds': odds_to_play,
                                     'stake': 1.0
                                 } for x in range(batch_n)]
-                                batch_bet_response = requests.post(batch_bet_url, json={"data": batch_body_to_send},
-                                                                   headers=self.__get_auth_header())
-                                if batch_bet_response.status_code != 200:
-                                    logging.info(f"failed to bet, error {bet_response.content}")
+                                batch_play_response = requests.post(batch_play_url, json={"data": batch_body_to_send},
+                                                                    headers=self.__get_auth_header())
+                                if batch_play_response.status_code != 200:
+                                    logging.info(f"failed to play, error {play_response.content}")
                                 else:
                                     logging.info("successfully")
-                                    for wager in batch_bet_response.json()['data']['succeed_wagers']:
+                                    for wager in batch_play_response.json()['data']['succeed_wagers']:
                                         self.wagers[wager['external_id']] = wager['id']
 
     def cancel_all_wagers(self):
@@ -380,9 +380,9 @@ class MMInteractions:
                 self.pusher = None
             self.subscribe()
 
-    def auto_betting(self):
-        logging.info("schedule to bet every 10 seconds!")
-        schedule.every(10).seconds.do(self.start_betting)
+    def auto_playing(self):
+        logging.info("schedule to play every 10 seconds!")
+        schedule.every(10).seconds.do(self.start_playing)
         schedule.every(9).seconds.do(self.random_cancel_wager)
         schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
