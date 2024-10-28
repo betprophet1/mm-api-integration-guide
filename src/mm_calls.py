@@ -278,6 +278,8 @@ class MMInteractions:
         if '.prophetbettingexchange' in bet_url:
             raise Exception("only allowed to run in non production environment")
         for key in self.sport_events:
+            if key not in (20021077, 20021074):
+                continue
             one_event = self.sport_events[key]
             for market in one_event.get('markets', []):
                 if True:
@@ -285,78 +287,83 @@ class MMInteractions:
                     # if market['id'] in (251, 256, 258):
                     #     continue
                     selections = market.get('selections', [])
-                    if random.random() < 0.4:   # 20% chance to bet
+                    if random.random() < 0.5:   # 20% chance to bet
+                        if 'market_lines' not in market:
+                            # for moneyline
+                            market['market_lines'] = [{0: market}]
                         if 'market_lines' in market:
-                            favorite_lines = [x.get('selections', []) for x in market['market_lines'] if x.get('favourite', False)]
-                            if len(favorite_lines) < 1:
-                                continue
-                            selections = favorite_lines[0]
-                        if len(selections) == 0:
-                            error_code = f"selections should not be empty for event {one_event['event_id']}"
-                            logging.error(error_code)
-                            #raise Exception(error_code)
-                            continue
-                        for selection in selections:
-                            if random.random() < 0.4: #20% chance to bet
-                                RUNNING = True
-                                picked_selection = 0
-                                odds_to_bet = self.__get_random_odds()
-                                external_id = str(uuid.uuid1())
-                                if len(selection) < 1:
-                                    #TODO: this is something we need to verify
+                            all_lines = market['market_lines']
+                            for one_line in all_lines:
+                                # favorite_lines = [x.get('selections', []) for x in market['market_lines'] if x.get('favourite', False)]
+                                # if len(favorite_lines) < 1:
+                                #    continue
+                                selections = one_line.get('selections', [])
+                                if len(selections) == 0:
+                                    error_code = f"selections should not be empty for event {one_event['event_id']}"
+                                    logging.error(error_code)
+                                    #raise Exception(error_code)
                                     continue
-                                logging.info(f"going to bet on '{one_event['name']}' on {market['type']}, side {selection[picked_selection]['name']} with odds {odds_to_bet}")
-                                if 'line_id' not in selection[picked_selection]:
-                                    continue
-                                body_to_send = {
-                                    'external_id': external_id,
-                                    'line_id': selection[picked_selection]['line_id'],
-                                    'odds': odds_to_bet,
-                                    'stake': 5.0
-                                }
-                                try:
-                                    bet_response = requests.post(bet_url, json=body_to_send,
-                                                                 headers=self.__get_auth_header())
-                                except Exception as e:
-                                    logging.warning(e)
-                                    continue
-                                if bet_response.status_code != 200:
-                                    logging.info(f"failed to bet, error {bet_response.content}")
-                                else:
-                                    logging.info("successfully")
-                                    self.wagers[external_id] = json.loads(bet_response.content).get('data', {})['wager']['id']
-                                # testing batch place wagers
-                                '''batch_n = 10
-                                external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
-                                batch_body_to_send = [{
-                                    'external_id': external_id_batch[x],
-                                    'line_id': selection[0]['line_id'],
-                                    'odds': odds_to_bet,
-                                    'stake': 100.0
-                                } for x in range(batch_n)]
-                                batch_bet_response = requests.post(batch_bet_url, json={"data": batch_body_to_send},
-                                                                   headers=self.__get_auth_header())
-                                if batch_bet_response.status_code != 200:
-                                    logging.info(f"failed to bet, error {batch_bet_response.content}")
-                                else:
-                                    logging.info("successfully")
-                                    for wager in batch_bet_response.json()['data']['succeed_wagers']:
-                                        self.wagers[wager['external_id']] = wager['id']
-
-                                # immediately batch cancel to make sure money return as expected
-                                batch_wagers_response = json.loads(batch_bet_response.content)
-                                batch_keys_to_cancel = [x['external_id'] for x in
-                                                        batch_wagers_response.get('data', {}).get('succeed_wagers', [])]
-                                batch_cancel_body = [{'wager_id': self.wagers[x],
-                                                      'external_id': x} for x in batch_keys_to_cancel]
-                                batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
-                                try:
-                                    response = requests.post(batch_cancel_url, json={'data': batch_cancel_body},
-                                                             headers=self.__get_auth_header())
-                                except Exception as e:
-                                    print(e)
-                                    return
-                                print(f"cancelled all {batch_n} wagers placed")'''
+                                for selection in selections:
+                                    if random.random() < 0.5: #20% chance to bet
+                                        RUNNING = True
+                                        picked_selection = 0
+                                        odds_to_bet = self.__get_random_odds()
+                                        external_id = str(uuid.uuid1())
+                                        if len(selection) < 1:
+                                            #TODO: this is something we need to verify
+                                            continue
+                                        logging.info(f"going to bet on '{one_event['name']}' on {market['type']}, side {selection[picked_selection]['name']} with odds {odds_to_bet}")
+                                        if 'line_id' not in selection[picked_selection]:
+                                            continue
+                                        body_to_send = {
+                                            'external_id': external_id,
+                                            'line_id': selection[picked_selection]['line_id'],
+                                            'odds': odds_to_bet,
+                                            'stake': 5.0
+                                        }
+                                        try:
+                                            bet_response = requests.post(bet_url, json=body_to_send,
+                                                                         headers=self.__get_auth_header())
+                                        except Exception as e:
+                                            logging.warning(e)
+                                            continue
+                                        if bet_response.status_code != 200:
+                                            logging.info(f"failed to bet, error {bet_response.content}")
+                                        else:
+                                            logging.info("successfully")
+                                            self.wagers[external_id] = json.loads(bet_response.content).get('data', {})['wager']['id']
+                                        # testing batch place wagers
+                                        '''batch_n = 10
+                                        external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
+                                        batch_body_to_send = [{
+                                            'external_id': external_id_batch[x],
+                                            'line_id': selection[0]['line_id'],
+                                            'odds': odds_to_bet,
+                                            'stake': 100.0
+                                        } for x in range(batch_n)]
+                                        batch_bet_response = requests.post(batch_bet_url, json={"data": batch_body_to_send},
+                                                                           headers=self.__get_auth_header())
+                                        if batch_bet_response.status_code != 200:
+                                            logging.info(f"failed to bet, error {batch_bet_response.content}")
+                                        else:
+                                            logging.info("successfully")
+                                            for wager in batch_bet_response.json()['data']['succeed_wagers']:
+                                                self.wagers[wager['external_id']] = wager['id']
+        
+                                        # immediately batch cancel to make sure money return as expected
+                                        batch_wagers_response = json.loads(batch_bet_response.content)
+                                        batch_keys_to_cancel = [x['external_id'] for x in
+                                                                batch_wagers_response.get('data', {}).get('succeed_wagers', [])]
+                                        batch_cancel_body = [{'wager_id': self.wagers[x],
+                                                              'external_id': x} for x in batch_keys_to_cancel]
+                                        batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
+                                        try:
+                                            response = requests.post(batch_cancel_url, json={'data': batch_cancel_body},
+                                                                     headers=self.__get_auth_header())
+                                        except Exception as e:
+                                            print(e)
+                                            return
+                                        print(f"cancelled all {batch_n} wagers placed")'''
 
         RUNNING = False
 
@@ -435,7 +442,7 @@ class MMInteractions:
 
     def auto_betting(self):
         logging.info("schedule to bet every 10 seconds")
-        schedule.every(20).seconds.do(self.start_betting)
+        schedule.every(8).seconds.do(self.start_betting)
         # schedule.every(9).seconds.do(self.random_cancel_wager)
         # schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
