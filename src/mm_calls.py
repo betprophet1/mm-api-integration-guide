@@ -278,7 +278,7 @@ class MMInteractions:
         if '.prophetbettingexchange' in bet_url:
             raise Exception("only allowed to run in non production environment")
         for key in self.sport_events:
-            if key not in (20021077, 20021074):
+            if key not in (20021088,):
                 continue
             one_event = self.sport_events[key]
             for market in one_event.get('markets', []):
@@ -286,11 +286,10 @@ class MMInteractions:
                     # only bet on moneyline
                     # if market['id'] in (251, 256, 258):
                     #     continue
-                    selections = market.get('selections', [])
                     if random.random() < 0.5:   # 20% chance to bet
                         if 'market_lines' not in market:
                             # for moneyline
-                            market['market_lines'] = [{0: market}]
+                            market['market_lines'] = [market]
                         if 'market_lines' in market:
                             all_lines = market['market_lines']
                             for one_line in all_lines:
@@ -319,7 +318,7 @@ class MMInteractions:
                                             'external_id': external_id,
                                             'line_id': selection[picked_selection]['line_id'],
                                             'odds': odds_to_bet,
-                                            'stake': 5.0
+                                            'stake': 100.0
                                         }
                                         try:
                                             bet_response = requests.post(bet_url, json=body_to_send,
