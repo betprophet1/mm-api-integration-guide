@@ -446,7 +446,7 @@ class MMInteractions:
         # schedule.every(9).seconds.do(self.random_cancel_wager)
         # schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
         schedule.every(8).minutes.do(self.__auto_extend_session)
-        schedule.every(200).seconds.do(self.seeding)
+        schedule.every(30).minutes.do(self.seeding)
 
         child_thread = threading.Thread(target=self.schedule_in_thread, daemon=False)
         child_thread.start()
