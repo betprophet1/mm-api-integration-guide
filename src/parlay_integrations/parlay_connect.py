@@ -158,13 +158,13 @@ class ParlayInteractions:
         auth_endpoint_url = urljoin(self.base_url, config.URL['parlay_websocket_auth'])
         # auth_endpoint_url = "http://localhost:19002/api/v1/mm/pusher"
         channels_response = requests.post(auth_endpoint_url,
-                                          data=json.dumps({'socket_id': socket_id}),
+                                          data={'socket_id': socket_id},
                                           headers=self.__get_auth_header())
         if channels_response.status_code != 200:
             logging.error("failed to get channels")
             raise Exception("failed to get channels")
         channels = channels_response.json()
-        return channels.get('data', {}).get('authorized_channel', [])
+        return channels.get('data').get('authorized_channel', [])
 
     def _get_connection_config(self):
         connection_config_url = urljoin(self.base_url, config.URL['parlay_connection_config'])
@@ -173,7 +173,7 @@ class ParlayInteractions:
             logging.error("failed to get connection configs")
             raise Exception("failed to get channels")
         conn_configs = connection_response.json()
-        return conn_configs['data']
+        return conn_configs
 
     def subscribe(self):
         connection_configs = self._get_connection_config()
@@ -188,13 +188,23 @@ class ParlayInteractions:
 
         def public_event_handler(*args, **kwargs):
             print("processing public, Args:", args)
-            event_received = json.loads(base64.b64decode(json.loads(args[0]).get('payload', '{}')))
+            event_received = json.loads(args[0]).get('payload', '{}')
             print(f"event details {event_received}")
             print("processing public, Kwargs:", kwargs)
-            # file_name = f"/Users/zhifeng.shi/development/mm-api-integration-guide/logs/{event_received.get('sport_event_id')}.txt"
-            # with open(file_name, 'a') as fp:
-            #    fp.write(f'{args[0]}\n')
-            #    fp.write(f'{json.dumps(event_received)}\n')
+            self.provide_price(event_received)
+            """
+            {'callback_url': 'https://api-ss-sandbox.betprophet.co/parlay/sp/order/offers', 
+            'created_at': 1744210012349577200,
+             'market_lines': [
+               {'line': 5.5, 'line_id': '4507a1464a5b43289a99f45f53f5af65', 'market_id': 412, 'outcome_id': 13, 'sport_event_id': 30023691},
+               {'line': 227, 'line_id': '8056acc62314b6300481536bf3d18121', 'market_id': 225, 'outcome_id': 13, 'sport_event_id': 20022121},
+               {'line': 1.5, 'line_id': '708d089509c57f54c115f6562c479115', 'market_id': 256, 'outcome_id': 1715, 'sport_event_id': 10074487},
+               {'line_id': 'fc10da901964584da0700e5d78b83904', 'market_id': 1303, 'outcome_id': 5, 'sport_event_id': 9615},
+               {'line': 1.5, 'line_id': 'b9c742a2846e8fcb870c9f5e912f7d51', 'market_id': 256, 'outcome_id': 1715, 'sport_event_id': 10074489},
+               {'line_id': '200954f9f9accd9754e2283806e991b5', 'market_id': 1303, 'outcome_id': 5, 'sport_event_id': 9617}],
+               'parlay_id': '83d790df-1ced-4490-a06a-7cb224faf59b',
+               'stake': 3.49}
+            """
 
         def private_event_handler(*args, **kwargs):
             global MAX_LATENCY
@@ -223,10 +233,10 @@ class ParlayInteractions:
             for channel in available_channels:
                 if 'broadcast' in channel['channel_name']:
                     broadcast_channel_name = channel['channel_name']
-                    public_events = channel['bind_events']
+                    public_events = channel['binding_events']
                 else:
                     private_channel_name = channel['channel_name']
-                    private_events = channel['bind_events']
+                    private_events = channel['binding_events']
             broadcast_channel = self.pusher.subscribe(broadcast_channel_name)
             for event in public_events:
                 # 'price.ask.new' is to receive parlay quoting requests
@@ -234,11 +244,39 @@ class ParlayInteractions:
 
             private_channel = self.pusher.subscribe(private_channel_name)
             for private_event in private_events:
-                private_channel.bind(private_event['name'], private_event_handler)
-                logging.info(f"subscribed to private channel, event name: {private_event['name']}, successfully")
+                # 'price.confirm.new'
+                private_channel.bind(private_event, private_event_handler)
+                logging.info(f"subscribed to private channel, event name: {private_event}, successfully")
 
         self.pusher.connection.bind('pusher:connection_established', connect_handler)
         self.pusher.connect()
+
+    def provide_price(self, price_quote_request):
+        # have to be valid for more than 5 seconds
+        now_nanno = int((time.time() + 10) * 1000000000)
+        provide_price_result = requests.post(
+            price_quote_request['callback_url'],
+            data=json.dumps({
+                'parlay_id': price_quote_request['parlay_id'],
+                'offers': [
+                    {
+                        'valid_until': now_nanno,
+                        'odds': 1000,
+                        'max_risk': 200
+                    },
+                    {
+                        'valid_until': now_nanno,
+                        'odds': 800,
+                        'max_risk': 2000
+                    }
+                ]
+            }),
+            headers=self.__get_auth_header()
+        )
+        if provide_price_result.status_code == 200:
+            print("price sent successfully")
+        else:
+            print("price did not sent successfully")
 
     def get_balance(self):
         balance_url = urljoin(self.base_url, config.URL['mm_balance'])
