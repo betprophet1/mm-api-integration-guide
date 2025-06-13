@@ -225,7 +225,13 @@ class MMInteractions:
          also batch wager placement restfu api place_multiple_wagers
         :return: Wager ids returned from the api are stored in a class object for wager cancellation example
         """
-        logging.info("Start playing, randomly :)")
+        # Check balance before playing
+        self.get_balance()
+        if self.balance <= 0:
+            logging.warning("⚠️  Balance is 0 or negative. Stopping auto play now Louis Senpai")
+            return False  # Signal to stop playing
+        
+        logging.info(f"💰 Current balance: ${self.balance:.2f} - Start playing, randomly :)")
         play_url = urljoin(self.base_url, config.URL['mm_place_wager'])
         batch_play_url = urljoin(self.base_url, config.URL['mm_batch_place'])
         if '.prophetx.co' in play_url:
@@ -235,9 +241,9 @@ class MMInteractions:
             for market in one_event.get('markets', []):
                 if market['type'] == 'moneyline':
                     # only play on moneyline
-                    if random.random() < 0.3:   # 30% chance to play
+                    if random.random() < 0.8:   # 30% chance to play
                         for selection in market.get('selections', []):
-                            if random.random() < 0.3: #30% chance to play
+                            if random.random() < 0.8: #30% chance to play
                                 odds_to_play = self.__get_random_odds()
                                 external_id = str(uuid.uuid1())
                                 logging.info(f"going to play on '{one_event['name']}' on moneyline, side {selection[0]['name']} with odds {odds_to_play}")
@@ -295,7 +301,7 @@ class MMInteractions:
     def random_cancel_wager(self):
         """
         Example on how to cancel a single wager using cancel_wager endpoint
-        :return:
+        :return: tuple of (success, status_code, error_message)
         """
         wager_keys = list(self.wagers.keys())
         for key in wager_keys:
@@ -312,40 +318,61 @@ class MMInteractions:
                 }
                 response = requests.post(cancel_url, json=body, headers=self.__get_auth_header())
                 if response.status_code != 200:
+                    error_msg = f"Status code: {response.status_code}"
+                    try:
+                        error_msg += f", Response: {response.json()}"
+                    except:
+                        error_msg += f", Response: {response.text}"
+                    
                     if response.status_code == 404:
-                        logging.info("already cancelled")
+                        logging.info(f"Already cancelled. {error_msg}")
                         if key in self.wagers:
                             self.wagers.pop(key)
                     else:
-                        logging.info("failed to cancel")
+                        logging.info(f"Failed to cancel. {error_msg}")
+                    return False, response.status_code, error_msg
                 else:
-                    logging.info("cancelled successfully")
+                    logging.info("Cancelled successfully")
                     self.wagers.pop(key)
+                    return True, response.status_code, "Success"
+        return None, None, "No wagers to cancel"
 
     def random_batch_cancel_wagers(self):
         """
-        example on how to cancel a batch of wagers using cancel_multiple_wagers
-        :return:
+        Example on how to cancel a batch of wagers using cancel_multiple_wagers
+        :return: tuple of (success, status_code, error_message)
         """
         wager_keys = list(self.wagers.keys())
+        if not wager_keys:
+            return None, None, "No wagers to cancel"
+            
         batch_keys_to_cancel = random.choices(wager_keys, k=min(4, len(wager_keys)))
         batch_cancel_body = [{'wager_id': self.wagers[x],
                               'external_id': x} for x in batch_keys_to_cancel]
         batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
         response = requests.post(batch_cancel_url, json={'data': batch_cancel_body}, headers=self.__get_auth_header())
+        
         if response.status_code != 200:
+            error_msg = f"Status code: {response.status_code}"
+            try:
+                error_msg += f", Response: {response.json()}"
+            except:
+                error_msg += f", Response: {response.text}"
+                
             if response.status_code == 404:
-                logging.info("already cancelled")
+                logging.info(f"Already cancelled. {error_msg}")
                 [self.wagers.pop(x) for x in batch_keys_to_cancel]
             else:
-                logging.info("failed to cancel")
+                logging.info(f"Failed to cancel. {error_msg}")
+            return False, response.status_code, error_msg
         else:
-            logging.info("cancelled successfully")
+            logging.info("Cancelled successfully")
             for key in batch_keys_to_cancel:
                 try:
                     self.wagers.pop(key)
                 except Exception as e:
-                    print(e)
+                    logging.error(f"Error removing wager {key}: {str(e)}")
+            return True, response.status_code, "Success"
 
     def __run_forever_in_thread(self):
         while True:
@@ -380,11 +407,136 @@ class MMInteractions:
                 self.pusher = None
             self.subscribe()
 
+    def test_batch_cancel_422(self):
+        """
+        Test batch cancel with malformed requests to trigger validation errors (422)
+        
+        This sends three types of invalid requests:
+        1. Missing required field (empty wager_id)
+        2. Wrong data type (numeric external_id instead of string)
+        3. Invalid field that doesn't exist in the schema
+        """
+        # Create a batch with malformed requests to trigger 422 validation errors
+        batch_cancel_body = [
+            {
+                'wager_id': 'partner_e3ffe33e-7722-40c0-b1a9-27e256d33ab1',  # Empty required field
+                'external_id': 'd416e4a8-3ad3-11f0-b6d0-66d1ca3c6a1d'
+            },
+            {
+                'wager_id': 'partner_2cc08900-cb51-42a1-9636-fa89a0aa5222',
+                'external_id': 'd3b13f04-3ad3-11f0-b6d0-66d1ca3c6a1d'
+            },
+        ]
+        
+        batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
+        logging.info("Sending malformed batch cancel request to trigger 422 error...")
+        response = requests.post(
+            batch_cancel_url, 
+            json={'data': batch_cancel_body}, 
+            headers=self.__get_auth_header()
+        )
+        
+        # Log the response in detail
+        logging.info(f"Status code: {response.status_code}")
+        try:
+            response_data = response.json()
+            logging.info(f"Response: {json.dumps(response_data, indent=2)}")
+            if response.status_code == 422:
+                logging.info("✓ Successfully triggered 422 Unprocessable Entity error")
+                if 'errors' in response_data:
+                    logging.info(f"Validation errors: {response_data['errors']}")
+            else:
+                logging.info("✗ Did not receive expected 422 status code")
+        except Exception as e:
+            logging.info(f"Response: {response.text}")
+            logging.info(f"Error parsing response: {str(e)}")
+        
+        return False, response.status_code, f"Test response: {response.text}"
+    
+    def test_cancel_failed_wager(self):
+        """
+        Test canceling a wager that is in FAILED state to get 422 error
+        """
+        # First place a wager with invalid parameters to get it into FAILED state
+        play_url = urljoin(self.base_url, config.URL['mm_place_wager'])
+        invalid_body = {
+            'external_id': str(uuid.uuid1()),
+            'line_id': '999999999',  # Invalid line ID
+            'odds': 1.91,
+            'stake': 1.0
+        }
+        
+        # Place the invalid wager first
+        play_response = requests.post(
+            play_url, 
+            json=invalid_body,
+            headers=self.__get_auth_header()
+        )
+        
+        if play_response.status_code == 200:
+            wager_id = play_response.json()['data']['wager']['id']
+            
+            # Try to cancel the failed wager
+            cancel_url = urljoin(self.base_url, config.URL['mm_cancel_wager'])
+            cancel_body = {
+                'external_id': invalid_body['external_id'],
+                'wager_id': wager_id
+            }
+            
+            response = requests.post(
+                cancel_url, 
+                json=cancel_body, 
+                headers=self.__get_auth_header()
+            )
+            
+            # Log the response
+            logging.info(f"Cancel failed wager - Status: {response.status_code}")
+            try:
+                logging.info(f"Response: {response.json()}")
+            except:
+                logging.info(f"Response: {response.text}")
+            
+            return False, response.status_code, f"Test response: {response.text}"
+        
+        return False, play_response.status_code, "Failed to create test wager"
+    
     def auto_playing(self):
         logging.info("schedule to play every 10 seconds!")
-        schedule.every(10).seconds.do(self.start_playing)
-        schedule.every(9).seconds.do(self.random_cancel_wager)
-        schedule.every(7).seconds.do(self.random_batch_cancel_wagers)
+        
+        def safe_start_playing():
+            try:
+                result = self.start_playing()
+                if result is False:  # Balance is 0, stop playing
+                    logging.warning("🚫 Auto play stopped due to insufficient balance")
+                    schedule.clear()  # Clear all scheduled jobs
+                    return schedule.CancelJob
+            except Exception as e:
+                logging.error(f"Error during play: {str(e)}")
+        
+        schedule.every(10).seconds.do(safe_start_playing)
+        
+        def handle_cancel_result():
+            success, status_code, error_msg = self.random_cancel_wager()
+            if not success and status_code:
+                logging.error(f"Cancel failed - Status: {status_code}, Error: {error_msg}")
+        
+        def handle_batch_cancel_result():
+            success, status_code, error_msg = self.random_batch_cancel_wagers()
+            if not success and status_code:
+                logging.error(f"Batch cancel failed - Status: {status_code}, Error: {error_msg}")
+        
+        def test_422_error():
+            success, status_code, error_msg = self.test_batch_cancel_422()
+            logging.error(f"Test cancel result - Status: {status_code}, Error: {error_msg}")
+            
+        def test_cancel_failed():
+            success, status_code, error_msg = self.test_cancel_failed_wager()
+            logging.error(f"Test cancel failed wager result - Status: {status_code}, Error: {error_msg}")
+        
+        schedule.every(9).seconds.do(handle_cancel_result)
+        schedule.every(7).seconds.do(handle_batch_cancel_result)
+        schedule.every(15).seconds.do(test_422_error)  # Run test every 15 seconds
+        schedule.every(20).seconds.do(test_cancel_failed)  # Run test every 20 seconds
         schedule.every(8).minutes.do(self.__auto_extend_session)
         # schedule.every(60).seconds.do(self.cancel_all_wagers)
 

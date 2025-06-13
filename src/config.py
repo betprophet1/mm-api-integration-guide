@@ -1,6 +1,11 @@
 import json
+import os
 
-with open('user_info.json') as fp:
+# Get the directory where config.py is located
+script_dir = os.path.dirname(os.path.abspath(__file__))
+user_info_path = os.path.join(script_dir, 'user_info.json')
+
+with open(user_info_path) as fp:
     user_info_dict = json.load(fp)
 
 MM_KEYS = {
