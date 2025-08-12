@@ -1,7 +1,7 @@
 {
-    "access_key": "dd5a0f874f0d12c497474e233559c12e",
-    "secret_key": "9db725387c93c7541dd9511690870f02",
-    "tournaments": ["NBA", "College Basketball", "NHL", "MLB"],
+    "access_key": "ee0f289703ecac739744f3e3d853f259",
+    "secret_key": "fb7e22b3d9a1fd40b7219f9ac930937c",
+    "tournaments": ["NFL", "MLB"],
     "load_all_tournaments": false,
     "all_tournaments": ["NBA","NCAA Tournament","NHL", "Premier League",
         "Champions League", "Bundesliga", "La Liga", "ATP Acapulco"]
