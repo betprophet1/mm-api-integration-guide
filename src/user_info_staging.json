@@ -1,7 +1,7 @@
 {
     "access_key": "ca79c014630c7699c7cc8ee92af8843b",
     "secret_key": "b19913374f454f1daa3604836f8d5819",
-    "tournaments": ["NHL 2", "MLB"],
+    "tournaments": ["NFL", "MLB"],
     "load_all_tournaments": false,
     "all_tournaments": ["NHL 2","NCAA Division I National Championship","NHL", "Premier League",
         "Champions League", "Bundesliga", "La Liga", "ATP Acapulco"]
