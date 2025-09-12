@@ -30,6 +30,18 @@ class MMInteractions:
     def __init__(self):
         self.base_url = config.BASE_URL
         self.mm_keys = config.MM_KEYS
+        # Session statistics tracking
+        self.session_stats = {
+            'start_time': time.time(),
+            'total_wagers_placed': 0,
+            'total_batch_wagers_placed': 0,
+            'successful_cancellations': 0,
+            'failed_cancellations': 0,
+            'starting_balance': 0,
+            'current_balance': 0,
+            'total_stake_deployed': 0,
+            'max_concurrent_wagers': 0
+        }
 
     def mm_login(self) -> dict:
         """'
@@ -217,7 +229,215 @@ class MMInteractions:
             logging.error("failed to get balance")
             return
         self.balance = json.loads(response.content).get('data', {}).get('balance', 0)
+        self.session_stats['current_balance'] = self.balance
+        if self.session_stats['starting_balance'] == 0:
+            self.session_stats['starting_balance'] = self.balance
         logging.info(f"still have ${self.balance} left")
+
+    def find_event_by_name(self, event_name):
+        """
+        Find events that match the given event name (partial or exact match)
+        :param event_name: The event name to search for
+        :return: List of matching events
+        """
+        matching_events = []
+        event_name_lower = event_name.lower()
+        
+        for event_id, event_data in self.sport_events.items():
+            if event_name_lower in event_data['name'].lower():
+                matching_events.append(event_data)
+                
+        return matching_events
+
+    def _immediate_single_cancel(self, external_id, wager_id):
+        """
+        Immediately cancel a single wager right after placing it
+        :param external_id: The external ID of the wager
+        :param wager_id: The wager ID from the API
+        """
+        cancel_url = urljoin(self.base_url, config.URL['mm_cancel_wager'])
+        body = {
+            'external_id': external_id,
+            'wager_id': wager_id,
+        }
+        
+        try:
+            response = requests.post(cancel_url, json=body, headers=self.__get_auth_header())
+            if response.status_code == 200:
+                logging.info("✅ IMMEDIATE CANCEL: Single wager cancelled successfully")
+                if external_id in self.wagers:
+                    self.wagers.pop(external_id)
+                self.session_stats['successful_cancellations'] += 1
+            else:
+                error_msg = f"Status: {response.status_code}"
+                try:
+                    error_msg += f", Response: {response.json()}"
+                except:
+                    error_msg += f", Response: {response.text}"
+                
+                if response.status_code == 400 and 'wager_already_matched' in response.text:
+                    logging.info("⚡ IMMEDIATE CANCEL: Wager already matched - too fast!")
+                elif response.status_code == 404:
+                    logging.info("ℹ️ IMMEDIATE CANCEL: Wager already cancelled")
+                    if external_id in self.wagers:
+                        self.wagers.pop(external_id)
+                else:
+                    logging.info(f"❌ IMMEDIATE CANCEL: Failed - {error_msg}")
+                
+                self.session_stats['failed_cancellations'] += 1
+        except Exception as e:
+            logging.error(f"❌ IMMEDIATE CANCEL: Exception - {str(e)}")
+            self.session_stats['failed_cancellations'] += 1
+
+    def _immediate_batch_cancel(self, batch_wagers):
+        """
+        Immediately cancel a batch of wagers right after placing them
+        :param batch_wagers: List of dicts with external_id and wager_id
+        """
+        if not batch_wagers:
+            return
+            
+        # Limit to max 4 wagers per batch cancel (API best practice)
+        batch_to_cancel = batch_wagers[:4]
+        
+        batch_cancel_body = [{
+            'wager_id': wager['wager_id'],
+            'external_id': wager['external_id']
+        } for wager in batch_to_cancel]
+        
+        batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
+        
+        try:
+            response = requests.post(batch_cancel_url, json={'data': batch_cancel_body}, headers=self.__get_auth_header())
+            if response.status_code == 200:
+                logging.info(f"✅ IMMEDIATE BATCH CANCEL: {len(batch_to_cancel)} wagers cancelled successfully")
+                for wager in batch_to_cancel:
+                    if wager['external_id'] in self.wagers:
+                        self.wagers.pop(wager['external_id'])
+                self.session_stats['successful_cancellations'] += len(batch_to_cancel)
+            else:
+                error_msg = f"Status: {response.status_code}"
+                try:
+                    error_msg += f", Response: {response.json()}"
+                except:
+                    error_msg += f", Response: {response.text}"
+                
+                if response.status_code == 404:
+                    logging.info(f"ℹ️ IMMEDIATE BATCH CANCEL: {len(batch_to_cancel)} wagers already cancelled")
+                    for wager in batch_to_cancel:
+                        if wager['external_id'] in self.wagers:
+                            self.wagers.pop(wager['external_id'])
+                else:
+                    logging.info(f"❌ IMMEDIATE BATCH CANCEL: Failed - {error_msg}")
+                
+                self.session_stats['failed_cancellations'] += len(batch_to_cancel)
+        except Exception as e:
+            logging.error(f"❌ IMMEDIATE BATCH CANCEL: Exception - {str(e)}")
+            self.session_stats['failed_cancellations'] += len(batch_to_cancel)
+
+    def start_playing_targeted(self, target_event_name=None):
+        """
+        Place wagers on targeted events - either specific event by name or all MLB events
+        :param target_event_name: The event name to target, or None for all MLB events
+        :return: Boolean indicating if playing should continue (balance > 0)
+        """
+        # Check balance before playing
+        self.get_balance()
+        if self.balance <= 0:
+            logging.warning("⚠️  Balance is 0 or negative. Stopping auto play now Louis Senpai")
+            return False  # Signal to stop playing
+        
+        # Determine which events to target
+        if target_event_name and target_event_name.upper() != 'ALL':
+            # Target specific event by name
+            matching_events = self.find_event_by_name(target_event_name)
+            if not matching_events:
+                logging.warning(f"🔍 No events found matching '{target_event_name}'")
+                return True  # Continue trying
+            logging.info(f"💰 Current balance: ${self.balance:.2f} - Targeting '{target_event_name}' ({len(matching_events)} matching events)")
+        else:
+            # Target ALL available MLB events
+            matching_events = list(self.sport_events.values())
+            logging.info(f"💰 Current balance: ${self.balance:.2f} - Targeting ALL MLB EVENTS ({len(matching_events)} total events)")
+        
+        play_url = urljoin(self.base_url, config.URL['mm_place_wager'])
+        batch_play_url = urljoin(self.base_url, config.URL['mm_batch_place'])
+        
+        if '.prophetx.co' in play_url:
+            raise Exception("only allowed to run in non production environment")
+        
+        # AGGRESSIVE: Play on ALL matching events and ALL MARKETS with very high probability
+        for event in matching_events:
+            for market in event.get('markets', []):
+                # REMOVED MARKET TYPE FILTER - Now plays on ALL markets (moneyline, spread, totals, etc.)
+                # AGGRESSIVE: Play on nearly every opportunity (98% chance)
+                if random.random() < 0.98:   # 98% chance to play
+                    for selection in market.get('selections', []):
+                        if random.random() < 0.95:  # 95% chance to play each selection
+                            odds_to_play = self.__get_random_odds()
+                            external_id = str(uuid.uuid1())
+                            logging.info(f"🔥🎯 AGGRESSIVE: '{event['name']}' on {market['type']} market, side {selection[0]['name']} with odds {odds_to_play}")
+                            
+                            body_to_send = {
+                                'external_id': external_id,
+                                'line_id': selection[0]['line_id'],
+                                'odds': odds_to_play,
+                                'stake': 1.0
+                            }
+                            
+                            play_response = requests.post(play_url, json=body_to_send,
+                                                         headers=self.__get_auth_header())
+                            if play_response.status_code != 200:
+                                logging.info(f"failed to play, error {play_response.content}")
+                            else:
+                                logging.info("🚀 AGGRESSIVE: successfully placed wager")
+                                wager_id = json.loads(play_response.content).get('data', {})['wager']['id']
+                                self.wagers[external_id] = wager_id
+                                self.session_stats['total_wagers_placed'] += 1
+                                self.session_stats['total_stake_deployed'] += 1.0
+                                
+                                # IMMEDIATE SINGLE CANCEL: Follow single bet with single cancel
+                                time.sleep(0.1)  # Small delay to ensure bet is processed
+                                self._immediate_single_cancel(external_id, wager_id)
+                            
+                            # AGGRESSIVE: Max out batch size to 20 (API limit)
+                            batch_n = 20
+                            external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
+                            batch_body_to_send = [{
+                                'external_id': external_id_batch[x],
+                                'line_id': selection[0]['line_id'],
+                                'odds': odds_to_play,
+                                'stake': 1.0
+                            } for x in range(batch_n)]
+                            
+                            batch_play_response = requests.post(batch_play_url, json={"data": batch_body_to_send},
+                                                                headers=self.__get_auth_header())
+                            if batch_play_response.status_code != 200:
+                                logging.info(f"failed batch play, error {batch_play_response.content}")
+                            else:
+                                batch_result = batch_play_response.json()['data']['succeed_wagers']
+                                self.session_stats['total_batch_wagers_placed'] += len(batch_result)
+                                self.session_stats['total_stake_deployed'] += len(batch_result) * 1.0
+                                logging.info(f"🚀 AGGRESSIVE: successfully placed batch wagers (20x) on {market['type']} market - Total: {len(batch_result)} wagers")
+                                
+                                # Store batch wagers
+                                batch_wagers_for_cancel = []
+                                for wager in batch_result:
+                                    self.wagers[wager['external_id']] = wager['id']
+                                    batch_wagers_for_cancel.append({
+                                        'external_id': wager['external_id'], 
+                                        'wager_id': wager['id']
+                                    })
+                                
+                                # Track max concurrent wagers
+                                current_wagers = len(self.wagers)
+                                if current_wagers > self.session_stats['max_concurrent_wagers']:
+                                    self.session_stats['max_concurrent_wagers'] = current_wagers
+                                
+                                # IMMEDIATE BATCH CANCEL: Follow batch bet with batch cancel
+                                time.sleep(0.1)  # Small delay to ensure batch is processed
+                                self._immediate_batch_cancel(batch_wagers_for_cancel)
+        return True
 
     def start_playing(self):
         """
@@ -310,7 +530,7 @@ class MMInteractions:
                 continue
             wager_id = self.wagers[key]
             cancel_url = urljoin(self.base_url, config.URL['mm_cancel_wager'])
-            if random.random() < 0.5:  # 50% cancel
+            if random.random() < 0.8:  # 80% cancel (SUPER AGGRESSIVE)
                 logging.info("start to cancel wager")
                 body = {
                     'external_id': key,
@@ -330,10 +550,12 @@ class MMInteractions:
                             self.wagers.pop(key)
                     else:
                         logging.info(f"Failed to cancel. {error_msg}")
+                    self.session_stats['failed_cancellations'] += 1
                     return False, response.status_code, error_msg
                 else:
                     logging.info("Cancelled successfully")
                     self.wagers.pop(key)
+                    self.session_stats['successful_cancellations'] += 1
                     return True, response.status_code, "Success"
         return None, None, "No wagers to cancel"
 
@@ -500,43 +722,28 @@ class MMInteractions:
         
         return False, play_response.status_code, "Failed to create test wager"
     
-    def auto_playing(self):
-        logging.info("schedule to play every 10 seconds!")
+    def auto_playing(self, target_event=None):
+        if target_event:
+            logging.info(f"🔥 AGGRESSIVE MODE: schedule to play every 2 seconds on targeted event: {target_event}")
+        else:
+            logging.info("🔥 AGGRESSIVE MODE: schedule to play every 2 seconds!")
         
         def safe_start_playing():
             try:
-                result = self.start_playing()
+                if target_event:
+                    result = self.start_playing_targeted(target_event)
+                else:
+                    result = self.start_playing()
                 if result is False:  # Balance is 0, stop playing
-                    logging.warning("🚫 Auto play stopped due to insufficient balance")
+                    logging.warning("😫 Auto play stopped due to insufficient balance")
                     schedule.clear()  # Clear all scheduled jobs
                     return schedule.CancelJob
             except Exception as e:
                 logging.error(f"Error during play: {str(e)}")
         
-        schedule.every(10).seconds.do(safe_start_playing)
+        schedule.every(2).seconds.do(safe_start_playing)
         
-        def handle_cancel_result():
-            success, status_code, error_msg = self.random_cancel_wager()
-            if not success and status_code:
-                logging.error(f"Cancel failed - Status: {status_code}, Error: {error_msg}")
-        
-        def handle_batch_cancel_result():
-            success, status_code, error_msg = self.random_batch_cancel_wagers()
-            if not success and status_code:
-                logging.error(f"Batch cancel failed - Status: {status_code}, Error: {error_msg}")
-        
-        def test_422_error():
-            success, status_code, error_msg = self.test_batch_cancel_422()
-            logging.error(f"Test cancel result - Status: {status_code}, Error: {error_msg}")
-            
-        def test_cancel_failed():
-            success, status_code, error_msg = self.test_cancel_failed_wager()
-            logging.error(f"Test cancel failed wager result - Status: {status_code}, Error: {error_msg}")
-        
-        schedule.every(9).seconds.do(handle_cancel_result)
-        schedule.every(7).seconds.do(handle_batch_cancel_result)
-        schedule.every(15).seconds.do(test_422_error)  # Run test every 15 seconds
-        schedule.every(20).seconds.do(test_cancel_failed)  # Run test every 20 seconds
+        # REMOVED OLD SCHEDULED CANCELLATIONS - Now using immediate cancellations after each bet
         schedule.every(8).minutes.do(self.__auto_extend_session)
         # schedule.every(60).seconds.do(self.cancel_all_wagers)
 
@@ -559,3 +766,49 @@ class MMInteractions:
         if odds == -100:
             odds = 100
         return odds
+
+    def print_session_report(self):
+        """
+        Print a beautiful session report with current statistics
+        """
+        elapsed_time = time.time() - self.session_stats['start_time']
+        hours = int(elapsed_time // 3600)
+        minutes = int((elapsed_time % 3600) // 60)
+        seconds = int(elapsed_time % 60)
+        
+        total_wagers = self.session_stats['total_wagers_placed'] + self.session_stats['total_batch_wagers_placed']
+        current_wagers = len(self.wagers)
+        
+        balance_change = self.session_stats['current_balance'] - self.session_stats['starting_balance']
+        balance_change_str = f"+${balance_change:.2f}" if balance_change >= 0 else f"-${abs(balance_change):.2f}"
+        
+        cancellation_rate = 0
+        if self.session_stats['successful_cancellations'] + self.session_stats['failed_cancellations'] > 0:
+            cancellation_rate = (self.session_stats['successful_cancellations'] / 
+                                (self.session_stats['successful_cancellations'] + 
+                                 self.session_stats['failed_cancellations'])) * 100
+        
+        wagers_per_minute = total_wagers / (elapsed_time / 60) if elapsed_time > 0 else 0
+        
+        logging.info("")
+        logging.info("╔════════════════════════════════════════════════════════════╗")
+        logging.info("║                  🔥 AGGRESSIVE SESSION REPORT 🔥            ║")
+        logging.info("╠════════════════════════════════════════════════════════════╣")
+        logging.info(f"║ ⏰ Session Duration: {hours:02d}h {minutes:02d}m {seconds:02d}s                     ║")
+        logging.info(f"║ 💰 Starting Balance: ${self.session_stats['starting_balance']:,.2f}                    ║")
+        logging.info(f"║ 💰 Current Balance:  ${self.session_stats['current_balance']:,.2f}                    ║")
+        logging.info(f"║ 📈 Balance Change:   {balance_change_str:<20}        ║")
+        logging.info("╠════════════════════════════════════════════════════════════╣")
+        logging.info(f"║ 🎯 Single Wagers:    {self.session_stats['total_wagers_placed']:<20}        ║")
+        logging.info(f"║ 🚀 Batch Wagers:     {self.session_stats['total_batch_wagers_placed']:<20}        ║")
+        logging.info(f"║ 📊 Total Wagers:     {total_wagers:<20}        ║")
+        logging.info(f"║ 💸 Total Stake:      ${self.session_stats['total_stake_deployed']:,.2f}                    ║")
+        logging.info(f"║ ⚡ Wagers/Minute:     {wagers_per_minute:.1f}                       ║")
+        logging.info("╠════════════════════════════════════════════════════════════╣")
+        logging.info(f"║ 📋 Current Open:     {current_wagers:<20}        ║")
+        logging.info(f"║ 📈 Max Concurrent:   {self.session_stats['max_concurrent_wagers']:<20}        ║")
+        logging.info(f"║ ✅ Cancellations:    {self.session_stats['successful_cancellations']:<20}        ║")
+        logging.info(f"║ ❌ Cancel Failures:  {self.session_stats['failed_cancellations']:<20}        ║")
+        logging.info(f"║ 📊 Cancel Rate:      {cancellation_rate:.1f}%                       ║")
+        logging.info("╚════════════════════════════════════════════════════════════╝")
+        logging.info("")
