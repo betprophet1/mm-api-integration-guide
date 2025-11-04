@@ -1,7 +1,7 @@
 {
-    "_comment": "The provided access_key and secret_key are intended for demonstration purposes only and will be discontinued in the future. To ensure uninterrupted access to this demo example, please replace them with your own Market Maker API credentials for account 2.",
-    "access_key": "dc7f7bc7032031656ed17f25163cb14c",
-    "secret_key": "0f7828ce0f700967111eb38bf40fbfa6",
+    "_comment": "Updated sandbox credentials for Market Maker API - Account 2",
+    "access_key": "14fc4622815f1c558a37d83b1e8f44f3",
+    "secret_key": "ec4fdfa7f05c07edb2db82895fc38200",
     "tournaments": ["NBA", "College Basketball", "NHL", "MLB"]
 }
 

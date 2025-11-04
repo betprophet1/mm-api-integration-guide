@@ -4,14 +4,24 @@ import os
 # Get the directory where config.py is located
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
+# Environment configuration
+ENVIRONMENT = os.getenv('MM_ENVIRONMENT', 'sandbox')  # Default to sandbox
+
+# Environment-specific URLs
+ENVIRONMENT_URLS = {
+    'sandbox': 'https://api-ss-sandbox.betprophet.co',
+    'staging': 'https://api-ss-staging.betprophet.co'
+}
+
 def load_user_config(config_file='user_info.json'):
     """Load user configuration from specified file"""
     user_info_path = os.path.join(script_dir, config_file)
     with open(user_info_path) as fp:
         return json.load(fp)
 
-# Load default account (Account 1)
-user_info_dict = load_user_config('user_info.json')
+# Load default account (Account 1) for current environment
+default_config_file = f'user_info_{ENVIRONMENT}.json' if ENVIRONMENT != 'sandbox' else 'user_info.json'
+user_info_dict = load_user_config(default_config_file)
 
 MM_KEYS = {
     'access_key': user_info_dict['access_key'],
@@ -20,23 +30,37 @@ MM_KEYS = {
 
 TOURNAMENTS_INTERESTED = user_info_dict['tournaments']
 
-# Function to get credentials for specific account
-def get_account_credentials(account_num=1):
-    """Get credentials for specified account number"""
+# Function to get credentials for specific account and environment
+def get_account_credentials(account_num=1, environment=None):
+    """Get credentials for specified account number and environment"""
+    env = environment or ENVIRONMENT
+    
     if account_num == 1:
-        config = load_user_config('user_info.json')
+        if env == 'sandbox':
+            config = load_user_config('user_info.json')
+        else:
+            config = load_user_config(f'user_info_{env}.json')
     elif account_num == 2:
-        config = load_user_config('user_info_account2.json')
+        if env == 'sandbox':
+            config = load_user_config('user_info_account2.json')
+        else:
+            config = load_user_config(f'user_info_account2_{env}.json')
+    elif account_num == 'patron' or account_num == 3:
+        if env == 'sandbox':
+            config = load_user_config('user_info_patron.json')
+        else:
+            config = load_user_config(f'user_info_patron_{env}.json')
     else:
         raise ValueError(f"Account {account_num} not supported")
     
     return {
         'access_key': config['access_key'],
         'secret_key': config['secret_key'],
-        'tournaments': config['tournaments']
+        'tournaments': config.get('tournaments', ['MLB'])
     }
 
-BASE_URL = 'https://api-ss-sandbox.betprophet.co'
+# Set BASE_URL based on environment
+BASE_URL = ENVIRONMENT_URLS.get(ENVIRONMENT, ENVIRONMENT_URLS['sandbox'])
 URL = {
     'mm_login': 'partner/auth/login',
     'mm_refresh': 'partner/auth/refresh',

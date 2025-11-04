@@ -339,13 +339,13 @@ class MMInteractions:
         """
         Place wagers on targeted events - either specific event by name or all MLB events
         :param target_event_name: The event name to target, or None for all MLB events
-        :return: Boolean indicating if playing should continue (balance > 0)
+        :return: Boolean indicating if playing should continue (always True now)
         """
-        # Check balance before playing
+        # Check balance before playing but NEVER STOP
         self.get_balance()
         if self.balance <= 0:
-            logging.warning("⚠️  Balance is 0 or negative. Stopping auto play now Louis Senpai")
-            return False  # Signal to stop playing
+            logging.warning("⚠️  Balance is $0 but NEVER STOP MODE: continuing to send bets anyway!")
+            # REMOVED: return False  # Now we NEVER stop due to balance
         
         # Determine which events to target
         if target_event_name and target_event_name.upper() != 'ALL':
@@ -390,15 +390,23 @@ class MMInteractions:
                             if play_response.status_code != 200:
                                 logging.info(f"failed to play, error {play_response.content}")
                             else:
-                                logging.info("🚀 AGGRESSIVE: successfully placed wager")
-                                wager_id = json.loads(play_response.content).get('data', {})['wager']['id']
-                                self.wagers[external_id] = wager_id
-                                self.session_stats['total_wagers_placed'] += 1
-                                self.session_stats['total_stake_deployed'] += 1.0
+                                try:
+                                    response_data = json.loads(play_response.content)
+                                    wager_data = response_data.get('data', {})
+                                    if 'wager' in wager_data and 'id' in wager_data['wager']:
+                                        wager_id = wager_data['wager']['id']
+                                        self.wagers[external_id] = wager_id
+                                        self.session_stats['total_wagers_placed'] += 1
+                                        self.session_stats['total_stake_deployed'] += 1.0
+                                        logging.info("🚀 AGGRESSIVE: successfully placed wager")
+                                    else:
+                                        logging.warning(f"⚠️ WAGER: Response 200 but no wager data: {response_data}")
+                                except Exception as e:
+                                    logging.error(f"❌ WAGER: Error parsing response: {e}, Raw: {play_response.content}")
                                 
-                                # IMMEDIATE SINGLE CANCEL: Follow single bet with single cancel
-                                time.sleep(0.1)  # Small delay to ensure bet is processed
-                                self._immediate_single_cancel(external_id, wager_id)
+                                # NO IMMEDIATE CANCEL: Let wagers stay open
+                                # time.sleep(0.1)  # Small delay to ensure bet is processed
+                                # self._immediate_single_cancel(external_id, wager_id)
                             
                             # AGGRESSIVE: Max out batch size to 20 (API limit)
                             batch_n = 20
@@ -415,10 +423,17 @@ class MMInteractions:
                             if batch_play_response.status_code != 200:
                                 logging.info(f"failed batch play, error {batch_play_response.content}")
                             else:
-                                batch_result = batch_play_response.json()['data']['succeed_wagers']
-                                self.session_stats['total_batch_wagers_placed'] += len(batch_result)
-                                self.session_stats['total_stake_deployed'] += len(batch_result) * 1.0
-                                logging.info(f"🚀 AGGRESSIVE: successfully placed batch wagers (20x) on {market['type']} market - Total: {len(batch_result)} wagers")
+                                try:
+                                    batch_response_data = batch_play_response.json()
+                                    batch_result = batch_response_data.get('data', {}).get('succeed_wagers', [])
+                                    if batch_result:
+                                        self.session_stats['total_batch_wagers_placed'] += len(batch_result)
+                                        self.session_stats['total_stake_deployed'] += len(batch_result) * 1.0
+                                        logging.info(f"🚀 AGGRESSIVE: successfully placed batch wagers (20x) on {market['type']} market - Total: {len(batch_result)} wagers")
+                                    else:
+                                        logging.warning(f"⚠️ BATCH: Response 200 but no succeed_wagers: {batch_response_data}")
+                                except Exception as e:
+                                    logging.error(f"❌ BATCH: Error parsing response: {e}, Raw: {batch_play_response.content}")
                                 
                                 # Store batch wagers
                                 batch_wagers_for_cancel = []
@@ -434,9 +449,9 @@ class MMInteractions:
                                 if current_wagers > self.session_stats['max_concurrent_wagers']:
                                     self.session_stats['max_concurrent_wagers'] = current_wagers
                                 
-                                # IMMEDIATE BATCH CANCEL: Follow batch bet with batch cancel
-                                time.sleep(0.1)  # Small delay to ensure batch is processed
-                                self._immediate_batch_cancel(batch_wagers_for_cancel)
+                                # NO IMMEDIATE BATCH CANCEL: Let batch wagers stay open
+                                # time.sleep(0.1)  # Small delay to ensure batch is processed
+                                # self._immediate_batch_cancel(batch_wagers_for_cancel)
         return True
 
     def start_playing(self):
@@ -445,11 +460,11 @@ class MMInteractions:
          also batch wager placement restfu api place_multiple_wagers
         :return: Wager ids returned from the api are stored in a class object for wager cancellation example
         """
-        # Check balance before playing
+        # Check balance before playing but NEVER STOP
         self.get_balance()
         if self.balance <= 0:
-            logging.warning("⚠️  Balance is 0 or negative. Stopping auto play now Louis Senpai")
-            return False  # Signal to stop playing
+            logging.warning("⚠️  Balance is $0 but NEVER STOP MODE: continuing to send bets anyway!")
+            # REMOVED: return False  # Now we NEVER stop due to balance
         
         logging.info(f"💰 Current balance: ${self.balance:.2f} - Start playing, randomly :)")
         play_url = urljoin(self.base_url, config.URL['mm_place_wager'])
@@ -734,10 +749,11 @@ class MMInteractions:
                     result = self.start_playing_targeted(target_event)
                 else:
                     result = self.start_playing()
-                if result is False:  # Balance is 0, stop playing
-                    logging.warning("😫 Auto play stopped due to insufficient balance")
-                    schedule.clear()  # Clear all scheduled jobs
-                    return schedule.CancelJob
+                # REMOVED balance check - NEVER STOP MODE
+                # if result is False:  # Balance is 0, stop playing
+                #     logging.warning("😫 Auto play stopped due to insufficient balance")
+                #     schedule.clear()  # Clear all scheduled jobs
+                #     return schedule.CancelJob
             except Exception as e:
                 logging.error(f"Error during play: {str(e)}")
         

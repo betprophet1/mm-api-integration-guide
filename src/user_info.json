@@ -1,6 +1,6 @@
 {
-    "_comment": "Updated with new Market Maker API credentials for testing.",
-    "access_key": "dd5c0a440274a9fea66eff2d3f4a7102",
-    "secret_key": "16fc936a4e074afc7b13c36652f6ef92",
+    "_comment": "Updated with new Market Maker API credentials for race condition testing.",
+    "access_key": "e85df05bd1bd885fbc0fc4b24fdd2500",
+    "secret_key": "67344329e054349f07e7a29249dcadeb",
     "tournaments": ["NBA", "College Basketball", "NHL", "MLB"]
 }
