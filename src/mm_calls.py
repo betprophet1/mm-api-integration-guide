@@ -333,7 +333,7 @@ class MMInteractions:
                                             logging.info("successfully")
                                             self.wagers[external_id] = json.loads(bet_response.content).get('data', {})['wager']['id']
                                         # testing batch place wagers
-
+                                        '''
                                         batch_n = 5
                                         external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
                                         batch_body_to_send = [{
@@ -359,7 +359,7 @@ class MMInteractions:
                                                               'external_id': x} for x in batch_keys_to_cancel]
                                         batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
 
-                                        '''try:
+                                        try:
                                             response = requests.post(batch_cancel_url, json={'data': batch_cancel_body},
                                                                      headers=self.__get_auth_header())
                                         except Exception as e:
