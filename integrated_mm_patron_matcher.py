@@ -150,8 +150,14 @@ class IntegratedMMInteractions(MMInteractions):
                     # AGGRESSIVE: Skip immediately, no delay
                     continue
                 
-                # Pick a random market
-                market = random.choice(markets)
+                # Filter for moneyline markets only
+                moneyline_markets = [m for m in markets if m.get('type') == 'moneyline']
+                if not moneyline_markets:
+                    # Skip if no moneyline markets available
+                    continue
+                
+                # Pick a random moneyline market
+                market = random.choice(moneyline_markets)
                 market_id = market.get('market_id') or market.get('id')
                 
                 # Get selections
@@ -187,7 +193,7 @@ class IntegratedMMInteractions(MMInteractions):
                 stake = 1.0
                 
                 # Place wager with notification
-                logging.info(f"🎲 {self.account_name} - Placing bet: {event['name']} (Event {event_id}, Market {market_id}, Outcome {outcome_id}) @ {odds}")
+                logging.info(f"🎲 {self.account_name} - Placing MONEYLINE bet: {event['name']} (Event {event_id}, Market {market_id}, Outcome {outcome_id}) @ {odds}")
                 self.place_wager_with_notification(
                     line_id=line_id,
                     odds=odds,
@@ -218,6 +224,14 @@ def run_mm_account(account_num, target_event, environment):
         
         # Create MM instance
         mm_instance = IntegratedMMInteractions(account_name)
+        
+        # Set correct base URL based on environment
+        environment_urls = {
+            'sandbox': 'https://api-ss-sandbox.betprophet.co',
+            'staging': 'https://api-ss-staging.betprophet.co'
+        }
+        mm_instance.base_url = environment_urls.get(environment, environment_urls['sandbox'])
+        
         mm_instance.mm_keys = {
             'access_key': credentials['access_key'],
             'secret_key': credentials['secret_key']
@@ -237,7 +251,7 @@ def run_mm_account(account_num, target_event, environment):
         mm_instance.seeding()
         
         # Start auto play with patron integration
-        logging.info(f"🎰 {account_name} - Starting auto play with patron integration...")
+        logging.info(f"🎰 {account_name} - Starting auto play with patron integration (MONEYLINE ONLY)...")
         mm_instance.auto_playing_with_patron(target_event)
         
         # Check if token expired

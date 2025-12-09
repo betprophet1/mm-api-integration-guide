@@ -42,6 +42,8 @@ class MMInteractions:
             'total_stake_deployed': 0,
             'max_concurrent_wagers': 0
         }
+        # Internal control to avoid blocking scheduler
+        self._playing_thread = None
 
     def mm_login(self) -> dict:
         """'
@@ -370,10 +372,10 @@ class MMInteractions:
         for event in matching_events:
             for market in event.get('markets', []):
                 # REMOVED MARKET TYPE FILTER - Now plays on ALL markets (moneyline, spread, totals, etc.)
-                # AGGRESSIVE: Play on nearly every opportunity (98% chance)
-                if random.random() < 0.98:   # 98% chance to play
+                # AGGRESSIVE: Play on nearly every opportunity (99% chance)
+                if random.random() < 0.99:   # 99% chance to play
                     for selection in market.get('selections', []):
-                        if random.random() < 0.95:  # 95% chance to play each selection
+                        if random.random() < 0.99:  # 99% chance to play each selection
                             odds_to_play = self.__get_random_odds()
                             external_id = str(uuid.uuid1())
                             logging.info(f"🔥🎯 AGGRESSIVE: '{event['name']}' on {market['type']} market, side {selection[0]['name']} with odds {odds_to_play}")
@@ -408,50 +410,49 @@ class MMInteractions:
                                 # time.sleep(0.1)  # Small delay to ensure bet is processed
                                 # self._immediate_single_cancel(external_id, wager_id)
                             
-                            # AGGRESSIVE: Max out batch size to 20 (API limit)
-                            batch_n = 20
-                            external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
-                            batch_body_to_send = [{
-                                'external_id': external_id_batch[x],
-                                'line_id': selection[0]['line_id'],
-                                'odds': odds_to_play,
-                                'stake': 1.0
-                            } for x in range(batch_n)]
+                            # AGGRESSIVE: Split into 5 runners x 20 items each = 100 total wagers per selection
+                            batch_n = 20  # API limit per request
+                            num_runners = 5  # 5 concurrent batch requests
                             
-                            batch_play_response = requests.post(batch_play_url, json={"data": batch_body_to_send},
-                                                                headers=self.__get_auth_header())
-                            if batch_play_response.status_code != 200:
-                                logging.info(f"failed batch play, error {batch_play_response.content}")
-                            else:
-                                try:
-                                    batch_response_data = batch_play_response.json()
-                                    batch_result = batch_response_data.get('data', {}).get('succeed_wagers', [])
-                                    if batch_result:
-                                        self.session_stats['total_batch_wagers_placed'] += len(batch_result)
-                                        self.session_stats['total_stake_deployed'] += len(batch_result) * 1.0
-                                        logging.info(f"🚀 AGGRESSIVE: successfully placed batch wagers (20x) on {market['type']} market - Total: {len(batch_result)} wagers")
-                                    else:
-                                        logging.warning(f"⚠️ BATCH: Response 200 but no succeed_wagers: {batch_response_data}")
-                                except Exception as e:
-                                    logging.error(f"❌ BATCH: Error parsing response: {e}, Raw: {batch_play_response.content}")
+                            for runner_idx in range(num_runners):
+                                external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
+                                batch_body_to_send = [{
+                                    'external_id': external_id_batch[x],
+                                    'line_id': selection[0]['line_id'],
+                                    'odds': odds_to_play,
+                                    'stake': 1.0
+                                } for x in range(batch_n)]
                                 
-                                # Store batch wagers
-                                batch_wagers_for_cancel = []
-                                for wager in batch_result:
-                                    self.wagers[wager['external_id']] = wager['id']
-                                    batch_wagers_for_cancel.append({
-                                        'external_id': wager['external_id'], 
-                                        'wager_id': wager['id']
-                                    })
-                                
-                                # Track max concurrent wagers
-                                current_wagers = len(self.wagers)
-                                if current_wagers > self.session_stats['max_concurrent_wagers']:
-                                    self.session_stats['max_concurrent_wagers'] = current_wagers
-                                
-                                # NO IMMEDIATE BATCH CANCEL: Let batch wagers stay open
-                                # time.sleep(0.1)  # Small delay to ensure batch is processed
-                                # self._immediate_batch_cancel(batch_wagers_for_cancel)
+                                batch_play_response = requests.post(batch_play_url, json={"data": batch_body_to_send},
+                                                                    headers=self.__get_auth_header())
+                                if batch_play_response.status_code != 200:
+                                    logging.info(f"failed batch play (runner {runner_idx+1}), error {batch_play_response.content}")
+                                else:
+                                    try:
+                                        batch_response_data = batch_play_response.json()
+                                        batch_result = batch_response_data.get('data', {}).get('succeed_wagers', [])
+                                        if batch_result:
+                                            self.session_stats['total_batch_wagers_placed'] += len(batch_result)
+                                            self.session_stats['total_stake_deployed'] += len(batch_result) * 1.0
+                                            logging.info(f"🚀 AGGRESSIVE (Runner {runner_idx+1}): successfully placed batch wagers (20x) on {market['type']} market - Total: {len(batch_result)} wagers")
+                                        else:
+                                            logging.warning(f"⚠️ BATCH (Runner {runner_idx+1}): Response 200 but no succeed_wagers: {batch_response_data}")
+                                    except Exception as e:
+                                        logging.error(f"❌ BATCH (Runner {runner_idx+1}): Error parsing response: {e}, Raw: {batch_play_response.content}")
+                                    
+                                    # Store batch wagers
+                                    batch_wagers_for_cancel = []
+                                    for wager in batch_result:
+                                        self.wagers[wager['external_id']] = wager['id']
+                                        batch_wagers_for_cancel.append({
+                                            'external_id': wager['external_id'], 
+                                            'wager_id': wager['id']
+                                        })
+                                    
+                                    # Track max concurrent wagers
+                                    current_wagers = len(self.wagers)
+                                    if current_wagers > self.session_stats['max_concurrent_wagers']:
+                                        self.session_stats['max_concurrent_wagers'] = current_wagers
         return True
 
     def start_playing(self):
@@ -538,40 +539,46 @@ class MMInteractions:
         Example on how to cancel a single wager using cancel_wager endpoint
         :return: tuple of (success, status_code, error_message)
         """
+        logging.info(f"🔍 SINGLE CANCEL: Checking wagers dict - Total: {len(self.wagers)}")
         wager_keys = list(self.wagers.keys())
+        if not wager_keys:
+            logging.info(f"❌ SINGLE CANCEL: No wagers available to cancel ({len(self.wagers)} total)")
+            return None, None, "No wagers to cancel"
+        
+        logging.info(f"🔄 SINGLE CANCEL: Attempting to cancel from {len(wager_keys)} wagers")
+        
         for key in wager_keys:
             if key not in self.wagers:
                 # just in case already canceled by another thread
                 continue
             wager_id = self.wagers[key]
             cancel_url = urljoin(self.base_url, config.URL['mm_cancel_wager'])
-            if random.random() < 0.8:  # 80% cancel (SUPER AGGRESSIVE)
-                logging.info("start to cancel wager")
-                body = {
-                    'external_id': key,
-                    'wager_id': wager_id,
-                }
-                response = requests.post(cancel_url, json=body, headers=self.__get_auth_header())
-                if response.status_code != 200:
-                    error_msg = f"Status code: {response.status_code}"
-                    try:
-                        error_msg += f", Response: {response.json()}"
-                    except:
-                        error_msg += f", Response: {response.text}"
-                    
-                    if response.status_code == 404:
-                        logging.info(f"Already cancelled. {error_msg}")
-                        if key in self.wagers:
-                            self.wagers.pop(key)
-                    else:
-                        logging.info(f"Failed to cancel. {error_msg}")
-                    self.session_stats['failed_cancellations'] += 1
-                    return False, response.status_code, error_msg
+            logging.info(f"✅ SINGLE CANCEL: Cancelling wager {key[:8]}... (ID: {wager_id[:8]}...)")
+            body = {
+                'external_id': key,
+                'wager_id': wager_id,
+            }
+            response = requests.post(cancel_url, json=body, headers=self.__get_auth_header())
+            if response.status_code != 200:
+                error_msg = f"Status code: {response.status_code}"
+                try:
+                    error_msg += f", Response: {response.json()}"
+                except:
+                    error_msg += f", Response: {response.text}"
+                
+                if response.status_code == 404:
+                    logging.info(f"ℹ️ SINGLE CANCEL: Already cancelled. {error_msg}")
+                    if key in self.wagers:
+                        self.wagers.pop(key)
                 else:
-                    logging.info("Cancelled successfully")
-                    self.wagers.pop(key)
-                    self.session_stats['successful_cancellations'] += 1
-                    return True, response.status_code, "Success"
+                    logging.warning(f"❌ SINGLE CANCEL FAILED: {error_msg}")
+                self.session_stats['failed_cancellations'] += 1
+                return False, response.status_code, error_msg
+            else:
+                logging.info(f"✅ SINGLE CANCEL: Successfully cancelled wager")
+                self.wagers.pop(key)
+                self.session_stats['successful_cancellations'] += 1
+                return True, response.status_code, "Success"
         return None, None, "No wagers to cancel"
 
     def random_batch_cancel_wagers(self):
@@ -579,11 +586,16 @@ class MMInteractions:
         Example on how to cancel a batch of wagers using cancel_multiple_wagers
         :return: tuple of (success, status_code, error_message)
         """
+        logging.info(f"🔍 BATCH CANCEL: Checking wagers dict - Total: {len(self.wagers)}")
         wager_keys = list(self.wagers.keys())
         if not wager_keys:
+            logging.info(f"❌ BATCH CANCEL: No wagers available ({len(self.wagers)} total)")
             return None, None, "No wagers to cancel"
-            
-        batch_keys_to_cancel = random.choices(wager_keys, k=min(4, len(wager_keys)))
+        
+        batch_size = min(10, len(wager_keys))  # Increased from 4 to 10 (still under 20 API limit)
+        batch_keys_to_cancel = random.choices(wager_keys, k=batch_size)
+        logging.info(f"🔄 BATCH CANCEL: Cancelling {len(batch_keys_to_cancel)} wagers from {len(wager_keys)} total")
+        
         batch_cancel_body = [{'wager_id': self.wagers[x],
                               'external_id': x} for x in batch_keys_to_cancel]
         batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
@@ -597,18 +609,20 @@ class MMInteractions:
                 error_msg += f", Response: {response.text}"
                 
             if response.status_code == 404:
-                logging.info(f"Already cancelled. {error_msg}")
-                [self.wagers.pop(x) for x in batch_keys_to_cancel]
+                logging.info(f"ℹ️ BATCH CANCEL: Already cancelled. {error_msg}")
+                [self.wagers.pop(x, None) for x in batch_keys_to_cancel]
             else:
-                logging.info(f"Failed to cancel. {error_msg}")
+                logging.warning(f"❌ BATCH CANCEL FAILED: {error_msg}")
+            self.session_stats['failed_cancellations'] += len(batch_keys_to_cancel)
             return False, response.status_code, error_msg
         else:
-            logging.info("Cancelled successfully")
+            logging.info(f"✅ BATCH CANCEL: Successfully cancelled {len(batch_keys_to_cancel)} wagers")
             for key in batch_keys_to_cancel:
                 try:
                     self.wagers.pop(key)
                 except Exception as e:
                     logging.error(f"Error removing wager {key}: {str(e)}")
+            self.session_stats['successful_cancellations'] += len(batch_keys_to_cancel)
             return True, response.status_code, "Success"
 
     def __run_forever_in_thread(self):
@@ -739,32 +753,74 @@ class MMInteractions:
     
     def auto_playing(self, target_event=None):
         if target_event:
-            logging.info(f"🔥 AGGRESSIVE MODE: schedule to play every 2 seconds on targeted event: {target_event}")
+            logging.info(f"🔥🔥 ULTRA AGGRESSIVE MODE: schedule to play every 0.5 seconds on targeted event: {target_event}")
         else:
-            logging.info("🔥 AGGRESSIVE MODE: schedule to play every 2 seconds!")
+            logging.info("🔥🔥 ULTRA AGGRESSIVE MODE: schedule to play every 0.5 seconds!")
         
         def safe_start_playing():
             try:
-                if target_event:
-                    result = self.start_playing_targeted(target_event)
-                else:
-                    result = self.start_playing()
-                # REMOVED balance check - NEVER STOP MODE
-                # if result is False:  # Balance is 0, stop playing
-                #     logging.warning("😫 Auto play stopped due to insufficient balance")
-                #     schedule.clear()  # Clear all scheduled jobs
-                #     return schedule.CancelJob
+                # Run play in background to avoid blocking scheduler
+                if getattr(self, '_playing_thread', None) and self._playing_thread.is_alive():
+                    return
+                def do_play():
+                    try:
+                        if target_event:
+                            self.start_playing_targeted(target_event)
+                        else:
+                            self.start_playing()
+                    except Exception as e:
+                        logging.error(f"Error during play: {str(e)}")
+                self._playing_thread = threading.Thread(target=do_play, daemon=True)
+                self._playing_thread.start()
             except Exception as e:
-                logging.error(f"Error during play: {str(e)}")
+                logging.error(f"Error scheduling play: {str(e)}")
         
-        schedule.every(2).seconds.do(safe_start_playing)
+        schedule.every(0.5).seconds.do(safe_start_playing)
         
-        # REMOVED OLD SCHEDULED CANCELLATIONS - Now using immediate cancellations after each bet
+        # Add aggressive cancel scheduling
+        def safe_cancel_single():
+            try:
+                self.random_cancel_wager()
+            except Exception as e:
+                logging.error(f"Error during single cancel: {str(e)}")
+        
+        def safe_cancel_batch():
+            try:
+                self.random_batch_cancel_wagers()
+            except Exception as e:
+                logging.error(f"Error during batch cancel: {str(e)}")
+        
+        # Schedule cancellations every 1.5 seconds (offset from placement)
+        schedule.every(1.5).seconds.do(safe_cancel_single)
+        # Schedule batch cancellations every 2 seconds
+        schedule.every(2).seconds.do(safe_cancel_batch)
+        
+        # Session extension
         schedule.every(8).minutes.do(self.__auto_extend_session)
-        # schedule.every(60).seconds.do(self.cancel_all_wagers)
 
+        # Start the schedule runner
         child_thread = threading.Thread(target=self.__run_forever_in_thread, daemon=False)
         child_thread.start()
+
+        # Start separate cancel loops to ensure they always run even if playing is busy
+        def cancel_loop():
+            while True:
+                try:
+                    self.random_cancel_wager()
+                except Exception as e:
+                    logging.error(f"Error in cancel loop: {str(e)}")
+                time.sleep(1.5)
+
+        def batch_cancel_loop():
+            while True:
+                try:
+                    self.random_batch_cancel_wagers()
+                except Exception as e:
+                    logging.error(f"Error in batch cancel loop: {str(e)}")
+                time.sleep(2)
+
+        threading.Thread(target=cancel_loop, daemon=True).start()
+        threading.Thread(target=batch_cancel_loop, daemon=True).start()
 
     def keep_alive(self):
         child_thread = threading.Thread(target=self.__run_forever_in_thread, daemon=False)

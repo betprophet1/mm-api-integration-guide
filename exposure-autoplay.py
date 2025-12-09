@@ -38,8 +38,8 @@ ACCOUNTS = [
         "name": "Account 2 (lam.tran+usr001)", 
         "email": "lam.tran+usr001@betprophet.co",
         "password": "Kh0ngbiet1", 
-        "access_key": "dc7f7bc7032031656ed17f25163cb14c",
-        "secret_key": "0f7828ce0f700967111eb38bf40fbfa6"
+        "access_key": "cef986b533dfd3a0b1a732e34e5c1d60",
+        "secret_key": "9d2f9f93158526a2fb9aeb24a6c5c082"
     }
 ]
 
@@ -297,11 +297,11 @@ class ExposureAutoplay:
                                 market_id = market.get('market_id') or market.get('id')
                                 market_type = market.get('type', 'unknown')
                                 
-                                # Filter for moneyline markets with marketId=251
-                                if market_type != 'moneyline' or market_id != 251:
+                                # Filter for moneyline markets with marketId=219
+                                if market_type != 'moneyline' or market_id != 219:
                                     continue
                                 
-                                print(f"   📈 Found moneyline market with ID 251: {market_id}")
+                                print(f"   📈 Found moneyline market with ID 219: {market_id}")
                                 
                                 # Extract selection details
                                 selection_details = []
@@ -407,7 +407,7 @@ class ExposureAutoplay:
 def has_gec_for_event(tester, event_id):
     """Check if tester has GEC from a specific event"""
     try:
-        lec_data = tester.check_exposures([event_id], [251])  # Check moneyline market
+        lec_data = tester.check_exposures([event_id], [219])  # Check moneyline market
         if lec_data and lec_data.get('data'):
             for exposure in lec_data['data']:
                 if exposure.get('eventId') == event_id and exposure.get('balance', 0) > 0:

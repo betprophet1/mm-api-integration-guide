@@ -1,0 +1,6 @@
+{
+    "_comment": "Patron account credentials for STAGING - web authentication",
+    "email": "lam.tran+usr002@betprophet.co",
+    "password": "Kh0ngbiet1",
+    "tournaments": ["MLB"]
+}

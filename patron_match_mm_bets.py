@@ -78,8 +78,12 @@ class PatronAccountMatcher:
     def load_patron_credentials(self):
         """Load patron account credentials from config"""
         try:
-            # Try to load patron-specific credentials
-            patron_config_file = 'user_info_patron.json'
+            # Try to load patron-specific credentials based on environment
+            if self.environment == 'sandbox':
+                patron_config_file = 'user_info_patron.json'
+            else:
+                patron_config_file = f'user_info_patron_{self.environment}.json'
+            
             patron_config_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), 
                 'src', 
