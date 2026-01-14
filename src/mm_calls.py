@@ -92,10 +92,12 @@ class MMInteractions:
         self.all_tournaments = all_tournaments
 
         # get sport events and markets of each event
+        # Filter to only NBA, MLB, and NFL tournaments
+        target_tournaments = ['NBA', 'MLB', 'NFL']
         event_url = urljoin(self.base_url, config.URL['mm_events'])
         multiple_markets_url = urljoin(self.base_url, config.URL['mm_multiple_markets'])
         for one_t in all_tournaments:
-            if one_t['name'] in config.TOURNAMENTS_INTERESTED:
+            if one_t['name'] in target_tournaments:
                 self.my_tournaments[one_t['id']] = one_t
                 events_response = requests.get(event_url, params={'tournament_id': one_t['id']}, headers=headers)
                 if events_response.status_code == 200:
@@ -235,6 +237,26 @@ class MMInteractions:
         if self.session_stats['starting_balance'] == 0:
             self.session_stats['starting_balance'] = self.balance
         logging.info(f"still have ${self.balance} left")
+    
+    def get_matched_bets(self, limit=100, offset=0):
+        """
+        Get recent matched bets for this account
+        :param limit: Maximum number of records to retrieve
+        :param offset: Offset for pagination
+        :return: List of matched bet records
+        """
+        matched_bets_url = urljoin(self.base_url, config.URL['mm_get_matched_bets'])
+        params = {
+            'limit': limit,
+            'offset': offset
+        }
+        response = requests.get(matched_bets_url, params=params, headers=self.__get_auth_header())
+        if response.status_code != 200:
+            logging.error(f"failed to get matched bets: {response.status_code}")
+            return []
+        matched_bets = json.loads(response.content).get('data', {}).get('matched_bets', [])
+        logging.info(f"Retrieved {len(matched_bets)} matched bets")
+        return matched_bets
 
     def find_event_by_name(self, event_name):
         """
