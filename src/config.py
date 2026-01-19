@@ -45,11 +45,23 @@ def get_account_credentials(account_num=1, environment=None):
             config = load_user_config('user_info_account2.json')
         else:
             config = load_user_config(f'user_info_account2_{env}.json')
-    elif account_num == 'patron' or account_num == 3:
+    elif account_num == 3:
         if env == 'sandbox':
-            config = load_user_config('user_info_patron.json')
+            config = load_user_config('user_info_account3.json')
         else:
-            config = load_user_config(f'user_info_patron_{env}.json')
+            config = load_user_config(f'user_info_account3_{env}.json')
+    elif account_num == 4:
+        if env == 'sandbox':
+            config = load_user_config('user_info_account4.json')
+        else:
+            config = load_user_config(f'user_info_account4_{env}.json')
+    elif account_num == 5:
+        if env == 'sandbox':
+            config = load_user_config('user_info_account5.json')
+        else:
+            config = load_user_config(f'user_info_account5_{env}.json')
+    elif account_num == 'patron':
+        config = load_user_config(f'user_info_patron_{env}.json')
     else:
         raise ValueError(f"Account {account_num} not supported")
     
@@ -77,6 +89,7 @@ URL = {
     'mm_batch_cancel': 'partner/mm/cancel_multiple_wagers',
     'mm_batch_place': 'partner/mm/place_multiple_wagers',
     'mm_cancel_all_wagers': 'partner/mm/cancel_all_wagers',
+    'mm_get_matched_bets': 'partner/mm/get_matched_bets',
     'websocket_config': 'partner/websocket/connection-config',
     # Exposure testing endpoints
     'exposure_balance': 'partner/exposure/get_balance',

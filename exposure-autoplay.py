@@ -45,7 +45,7 @@ ACCOUNTS = [
 
 # Shared data between accounts
 shared_data = {
-    "tournament_id": None,
+    "tournament_ids": [],  # Changed to support multiple tournaments
     "event_ids": [],
     "market_data": [],
     "lock": threading.Lock()
@@ -215,16 +215,72 @@ class ExposureAutoplay:
                     print("❌ No tournaments available")
                     return False
                 
-                print(f"🔍 Found {len(tournaments)} tournaments, checking for events...")
+                print(f"🔍 Found {len(tournaments)} tournaments, scanning for comprehensive market coverage...")
                 
-                # Prefer MLB and NBA tournaments
-                preferred_tournaments = [t for t in tournaments if t.get('name') in ('MLB', 'NBA')]
-                tournaments_to_check = preferred_tournaments if preferred_tournaments else tournaments
+                # Required market types
+                REQUIRED_MARKET_TYPES = {'moneyline', 'spread', 'total'}
+                qualifying_tournaments = []
                 
-                for tournament in tournaments_to_check:
-                    print(f"   Checking tournament: {tournament['name']} (ID: {tournament['id']})")
+                # First pass: identify tournaments with ALL market types
+                for tournament in tournaments:
+                    t_name = tournament['name']
+                    t_id = tournament['id']
                     
-                    # Check if this tournament has events
+                    print(f"   🏆 {t_name}: Checking...")
+                    
+                    # Get events
+                    events_response = requests.get(events_url,
+                                                 params={'tournament_id': t_id},
+                                                 headers=self.get_mm_auth_header(), timeout=10)
+                    
+                    if events_response.status_code != 200:
+                        print(f"      ⚠️ Failed to get events")
+                        continue
+                    
+                    events = events_response.json().get('data', {}).get('sport_events', [])
+                    if not events:
+                        print(f"      ⚠️ No events available")
+                        continue
+                    
+                    # Get markets for first 5 events to check market types
+                    event_ids_str = ','.join(str(e['event_id']) for e in events[:5])
+                    markets_url = urljoin(BASE_URL, "partner/mm/get_multiple_markets")
+                    markets_response = requests.get(markets_url,
+                                                   params={'event_ids': event_ids_str},
+                                                   headers=self.get_mm_auth_header(), timeout=10)
+                    
+                    if markets_response.status_code != 200:
+                        print(f"      ⚠️ Failed to get markets")
+                        continue
+                    
+                    markets_by_event = markets_response.json().get('data', {})
+                    found_market_types = set()
+                    
+                    # Check which market types are available
+                    for event_id, markets in markets_by_event.items():
+                        for market in markets:
+                            market_type = market.get('type')
+                            if market_type in REQUIRED_MARKET_TYPES:
+                                found_market_types.add(market_type)
+                    
+                    # Check if this tournament has ALL required market types
+                    if found_market_types == REQUIRED_MARKET_TYPES:
+                        qualifying_tournaments.append(t_id)
+                        print(f"      ✅ HAS ALL TYPES: {len(events)} events, Types: {', '.join(sorted(found_market_types))}")
+                    else:
+                        missing = REQUIRED_MARKET_TYPES - found_market_types
+                        print(f"      ❌ Missing: {', '.join(sorted(missing))}")
+                
+                # Store all qualifying tournament IDs
+                if qualifying_tournaments:
+                    with shared_data["lock"]:
+                        shared_data["tournament_ids"] = qualifying_tournaments
+                    print(f"\n✅ Selected {len(qualifying_tournaments)} tournaments with ALL market types")
+                    return True
+                
+                # Fallback: use any available tournament
+                print("🔍 Target tournaments not available, using any available tournament...")
+                for tournament in tournaments:
                     events_response = requests.get(events_url, 
                                                  params={'tournament_id': tournament['id']}, 
                                                  headers=self.get_mm_auth_header(), timeout=10)
@@ -233,13 +289,9 @@ class ExposureAutoplay:
                         events = events_response.json().get('data', {}).get('sport_events', [])
                         if events:
                             with shared_data["lock"]:
-                                shared_data["tournament_id"] = tournament['id']
-                            print(f"✅ Using tournament with {len(events)} events: {tournament['name']} (ID: {tournament['id']})")
+                                shared_data["tournament_ids"] = [tournament['id']]
+                            print(f"✅ Using {tournament['name']} with {len(events)} events")
                             return True
-                        else:
-                            print(f"   No events in {tournament['name']}")
-                    else:
-                        print(f"   Failed to check events for {tournament['name']}: {events_response.status_code}")
                 
                 print("❌ No tournaments with events found")
                 return False
@@ -251,59 +303,95 @@ class ExposureAutoplay:
             return False
     
     def get_events_and_markets(self):
-        """Get events and markets from the tournament (only done by Account 1)"""
-        if self.account['id'] != 1 or not self.mm_token or not shared_data["tournament_id"]:
+        """Get events and markets from multiple tournaments (only done by Account 1)"""
+        if self.account['id'] != 1 or not self.mm_token or not shared_data.get("tournament_ids"):
             return False
             
         events_url = urljoin(BASE_URL, "partner/mm/get_sport_events")
         multiple_markets_url = urljoin(BASE_URL, "partner/mm/get_multiple_markets")
         
+        all_event_ids = []
+        
         try:
-            # Get events
-            response = requests.get(events_url, 
-                                  params={'tournament_id': shared_data["tournament_id"]}, 
-                                  headers=self.get_mm_auth_header(), timeout=10)
-            
-            if response.status_code == 200:
-                events = response.json().get('data', {}).get('sport_events', [])
-                if not events:
-                    print("❌ No events found in tournament")
-                    return False
-                
-                # Store event IDs (use first 3 events)
-                event_ids = [event['event_id'] for event in events[:3]]
-                with shared_data["lock"]:
-                    shared_data["event_ids"] = event_ids
-                
-                print(f"🎮 Found {len(events)} events, using first {len(event_ids)}")
-                
-                # Get markets for these events
-                event_ids_str = ','.join(map(str, event_ids))
-                print(f"   Fetching markets for events: {event_ids_str}")
-                response = requests.get(multiple_markets_url,
-                                      params={'event_ids': event_ids_str},
+            # Get events from all tournaments
+            for tournament_id in shared_data["tournament_ids"]:
+                response = requests.get(events_url, 
+                                      params={'tournament_id': tournament_id}, 
                                       headers=self.get_mm_auth_header(), timeout=10)
                 
-                print(f"   Markets response status: {response.status_code}")
                 if response.status_code == 200:
-                    markets_by_event = response.json().get('data', {})
-                    
-                    # Extract market and line data
-                    market_data = []
-                    for event_id, markets in markets_by_event.items():
-                        print(f"   Processing event {event_id} with {len(markets)} markets")
-                        for market in markets:
-                            try:
-                                market_id = market.get('market_id') or market.get('id')
-                                market_type = market.get('type', 'unknown')
-                                
-                                # Filter for moneyline markets with marketId=219
-                                if market_type != 'moneyline' or market_id != 219:
-                                    continue
-                                
-                                print(f"   📈 Found moneyline market with ID 219: {market_id}")
-                                
-                                # Extract selection details
+                    events = response.json().get('data', {}).get('sport_events', [])
+                    if events:
+                        # Use first 3 events from each tournament
+                        tournament_event_ids = [event['event_id'] for event in events[:3]]
+                        all_event_ids.extend(tournament_event_ids)
+            
+            if not all_event_ids:
+                print("❌ No events found in any tournament")
+                return False
+            
+            with shared_data["lock"]:
+                shared_data["event_ids"] = all_event_ids
+            
+            print(f"🎮 Found {len(all_event_ids)} events across {len(shared_data['tournament_ids'])} tournaments")
+            
+            # Get markets for these events
+            event_ids_str = ','.join(map(str, all_event_ids))
+            print(f"   Fetching markets for events: {event_ids_str}")
+            response = requests.get(multiple_markets_url,
+                                  params={'event_ids': event_ids_str},
+                                  headers=self.get_mm_auth_header(), timeout=10)
+            
+            print(f"   Markets response status: {response.status_code}")
+            if response.status_code == 200:
+                markets_by_event = response.json().get('data', {})
+                
+                # Extract market and line data
+                # Market types to test
+                MARKET_TYPES = ['moneyline', 'spread', 'total']
+                market_data = []
+                market_type_counts = {'moneyline': 0, 'spread': 0, 'total': 0}
+                
+                for event_id, markets in markets_by_event.items():
+                    print(f"   Processing event {event_id} with {len(markets)} markets")
+                    for market in markets:
+                        try:
+                            market_id = market.get('market_id') or market.get('id')
+                            market_type = market.get('type', 'unknown')
+                            
+                            # Include moneyline, spread, and total markets
+                            if market_type not in MARKET_TYPES:
+                                continue
+                            
+                            print(f"   📈 Found {market_type} market (ID: {market_id})")
+                            
+                            # Handle markets with market_lines (spread, total)
+                            if 'market_lines' in market:
+                                for market_line in market.get('market_lines', []):
+                                    selection_details = []
+                                    for selection_group in market_line.get('selections', []):
+                                        if isinstance(selection_group, list):
+                                            for selection in selection_group:
+                                                if selection.get('line_id'):
+                                                    selection_details.append({
+                                                        'line_id': selection['line_id'],
+                                                        'name': selection.get('name', 'Unknown'),
+                                                        'odds': selection.get('odds') if selection.get('odds') is not None else -110,
+                                                        'outcome_id': selection.get('outcome_id', 'Unknown')
+                                                    })
+                                    
+                                    if selection_details and len(selection_details) >= 2:
+                                        line_ids = [s['line_id'] for s in selection_details]
+                                        market_data.append({
+                                            'event_id': int(event_id),
+                                            'market_id': market_id,
+                                            'market_type': market_type,
+                                            'line_ids': line_ids,
+                                            'selections': selection_details
+                                        })
+                                        market_type_counts[market_type] += 1
+                            else:
+                                # Handle markets with direct selections (moneyline)
                                 selection_details = []
                                 selections = market.get('selections', [])
                                 
@@ -315,20 +403,19 @@ class ExposureAutoplay:
                                                     selection_details.append({
                                                         'line_id': selection['line_id'],
                                                         'name': selection.get('name', 'Unknown'),
-                                                        'odds': selection.get('odds', 'Unknown'),
+                                                        'odds': selection.get('odds') if selection.get('odds') is not None else -110,
                                                         'outcome_id': selection.get('outcome_id', 'Unknown')
                                                     })
                                         elif isinstance(selection_group, dict) and selection_group.get('line_id'):
                                             selection_details.append({
                                                 'line_id': selection_group['line_id'],
                                                 'name': selection_group.get('name', 'Unknown'),
-                                                'odds': selection_group.get('odds', 'Unknown'),
+                                                'odds': selection_group.get('odds') if selection_group.get('odds') is not None else -110,
                                                 'outcome_id': selection_group.get('outcome_id', 'Unknown')
                                             })
                                 
-                                if selection_details:
+                                if selection_details and len(selection_details) >= 2:
                                     line_ids = [s['line_id'] for s in selection_details]
-                                    
                                     market_data.append({
                                         'event_id': int(event_id),
                                         'market_id': market_id,
@@ -336,27 +423,22 @@ class ExposureAutoplay:
                                         'line_ids': line_ids,
                                         'selections': selection_details
                                     })
+                                    market_type_counts[market_type] += 1
                                     
-                                    print(f"   ✅ Market added - Event: {event_id}, Market: {market_id}, Lines: {len(line_ids)}")
-                                    print(f"   📋 Selections: {len(selection_details)} teams found")
-                                    for i, detail in enumerate(selection_details):
-                                        print(f"      Team {i+1}: {detail['name']} (Outcome: {detail['outcome_id']}, Odds: {detail['odds']})")
-                                else:
-                                    print(f"   ⚠️ No betting lines found in market {market_id}")
-                                    
-                            except Exception as e:
-                                print(f"   ❌ Error processing market: {e}")
-                    
-                    with shared_data["lock"]:
-                        shared_data["market_data"] = market_data
-                    
-                    print(f"✅ Seeded {len(market_data)} markets with betting lines")
-                    return len(market_data) > 0
-                else:
-                    print(f"❌ Markets fetch failed: {response.status_code}")
-                    return False
+                                    print(f"   ✅ Market added - Event: {event_id}, Type: {market_type}, Market ID: {market_id}, Lines: {len(line_ids)}")
+                        except Exception as e:
+                            print(f"   ❌ Error processing market: {e}")
+                
+                with shared_data["lock"]:
+                    shared_data["market_data"] = market_data
+                
+                print(f"✅ Seeded {len(market_data)} total markets with betting lines:")
+                print(f"   - Moneyline: {market_type_counts['moneyline']}")
+                print(f"   - Spread: {market_type_counts['spread']}")
+                print(f"   - Total: {market_type_counts['total']}")
+                return len(market_data) > 0
             else:
-                print(f"❌ Events fetch failed: {response.status_code}")
+                print(f"❌ Markets fetch failed: {response.status_code}")
                 return False
         except Exception as e:
             print(f"❌ Events/Markets error: {e}")
