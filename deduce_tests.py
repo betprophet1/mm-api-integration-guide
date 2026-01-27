@@ -69,7 +69,6 @@ class DeduceTestFramework:
             request_body = {
                 'email': credentials.get('email', credentials.get('username')),
                 'password': credentials['password'],
-                'code': '123456',
                 'device_id': str(uuid.uuid1())
             }
             response = requests.post(login_url, json=request_body, headers=headers)
@@ -97,20 +96,70 @@ class DeduceTestFramework:
         """Get auth header for an account"""
         if account_name not in self.sessions:
             raise Exception(f"Account {account_name} not logged in")
-        return {
+        
+        account_type = self.sessions[account_name]['account_type']
+        
+        header = {
             'Authorization': f'Bearer {self.sessions[account_name]["session"]["access_token"]}',
         }
+        
+        # Add additional headers for patron accounts
+        if account_type == 'patron':
+            header.update({
+                'Content-Type': 'application/json',
+                'x-currency': 'cash',
+                'accept': 'application/json'
+            })
+        
+        return header
     
     def get_balance(self, account_name: str) -> dict:
-        """Get balance for an account"""
-        balance_url = urljoin(self.base_url, config.URL['mm_balance'])
+        """Get balance for an account
+        
+        For MM accounts with deduce, the response includes:
+        - balance: Main balance (doesn't change immediately for deduce accounts)
+        - matched_wager_balance: Total exposure from matched bets
+        - unmatched_wager_balance: Total exposure from unmatched bets
+        
+        Available balance = balance - matched_wager_balance - unmatched_wager_balance
+        """
+        # Check account type and use appropriate endpoint
+        if account_name not in self.sessions:
+            raise Exception(f"Account {account_name} not logged in")
+        
+        account_type = self.sessions[account_name]['account_type']
+        
+        if account_type == 'patron':
+            # Use web API wallet endpoint for patrons
+            balance_url = urljoin(self.base_url, 'api/v1/wallet')
+        else:
+            # Use MM API balance endpoint for MM accounts
+            balance_url = urljoin(self.base_url, config.URL['mm_balance'])
+        
         response = requests.get(balance_url, headers=self.get_auth_header(account_name))
         
         if response.status_code != 200:
             raise Exception(f"Failed to get balance for {account_name}")
             
         balance_data = json.loads(response.content).get('data', {})
-        logging.info(f"{Colors.CYAN}💰 {account_name} balance: ${balance_data.get('balance', 0):.2f}{Colors.RESET}")
+        
+        # For MM accounts, calculate available balance
+        if account_type == 'mm':
+            main_balance = balance_data.get('balance', 0)
+            matched_wager_bal = balance_data.get('matched_wager_balance', 0)
+            unmatched_wager_bal = balance_data.get('unmatched_wager_balance', 0)
+            available_balance = main_balance - matched_wager_bal - unmatched_wager_bal
+            
+            balance_data['available_balance'] = available_balance
+            
+            logging.info(f"{Colors.CYAN}💰 {account_name}: " +
+                        f"Balance=${main_balance:.2f}, " +
+                        f"Matched=${matched_wager_bal:.2f}, " +
+                        f"Unmatched=${unmatched_wager_bal:.2f}, " +
+                        f"Available=${available_balance:.2f}{Colors.RESET}")
+        else:
+            logging.info(f"{Colors.CYAN}💰 {account_name} balance: ${balance_data.get('balance', 0):.2f}{Colors.RESET}")
+        
         return balance_data
     
     def get_exposure(self, account_name: str) -> dict:
@@ -129,31 +178,71 @@ class DeduceTestFramework:
             logging.warning(f"Exposure endpoint not available: {e}")
             return {}
     
-    def get_matched_bets(self, account_name: str, limit: int = 100, offset: int = 0) -> list:
+    def get_matched_bets(self, account_name: str, limit: int = 100, offset: int = 0, date_from: str = None) -> list:
         """Get recent matched bets for an account
         
         Args:
             account_name: The account to query
             limit: Maximum number of records to retrieve
             offset: Offset for pagination
+            date_from: Date filter in YYYY-MM-DD format (for patron accounts)
             
         Returns:
             List of matched bet records
         """
+        if account_name not in self.sessions:
+            raise Exception(f"Account {account_name} not logged in")
+        
+        account_type = self.sessions[account_name]['account_type']
+        
         try:
-            matched_bets_url = urljoin(self.base_url, config.URL.get('mm_get_matched_bets', 'partner/mm/get_matched_bets'))
-            params = {'limit': limit, 'offset': offset}
-            response = requests.get(matched_bets_url, params=params, headers=self.get_auth_header(account_name))
-            
-            if response.status_code == 200:
-                matched_bets = json.loads(response.content).get('data', {}).get('matched_bets', [])
-                logging.info(f"{Colors.CYAN}📊 {account_name} has {len(matched_bets)} matched bets{Colors.RESET}")
-                return matched_bets
+            if account_type == 'patron':
+                # Patron accounts use web API transaction endpoint
+                # Get today's date if not provided
+                if not date_from:
+                    from datetime import datetime
+                    date_from = datetime.now().strftime('%Y-%m-%d')
+                
+                matched_bets_url = urljoin(self.base_url, 'api/v2/transaction/wagers/cursor')
+                params = {
+                    'status': 'open',
+                    'matchingStatus': 'partially_matched,fully_matched',
+                    'dateFrom': date_from,
+                    'sortField': 'placed_date:desc:desc',
+                    'limit': limit,
+                    'group': 1
+                }
+                
+                # Add patron-specific headers
+                headers = self.get_auth_header(account_name)
+                headers['__source'] = 'web'
+                
+                response = requests.get(matched_bets_url, params=params, headers=headers)
+                
+                if response.status_code == 200:
+                    response_data = json.loads(response.content)
+                    # Patron API returns data in 'wagers' field
+                    matched_bets = response_data.get('data', {}).get('wagers', [])
+                    logging.info(f"{Colors.CYAN}📊 {account_name} has {len(matched_bets)} matched bets{Colors.RESET}")
+                    return matched_bets
+                else:
+                    logging.warning(f"Could not get matched bets for {account_name}: {response.status_code}")
+                    return []
             else:
-                logging.warning(f"Could not get matched bets for {account_name}: {response.status_code}")
-                return []
+                # MM accounts use MM API endpoint
+                matched_bets_url = urljoin(self.base_url, config.URL.get('mm_get_matched_bets', 'partner/mm/get_matched_bets'))
+                params = {'limit': limit, 'offset': offset}
+                response = requests.get(matched_bets_url, params=params, headers=self.get_auth_header(account_name))
+                
+                if response.status_code == 200:
+                    matched_bets = json.loads(response.content).get('data', {}).get('matched_bets', [])
+                    logging.info(f"{Colors.CYAN}📊 {account_name} has {len(matched_bets)} matched bets{Colors.RESET}")
+                    return matched_bets
+                else:
+                    logging.warning(f"Could not get matched bets for {account_name}: {response.status_code}")
+                    return []
         except Exception as e:
-            logging.warning(f"Matched bets endpoint error: {e}")
+            logging.warning(f"Matched bets endpoint error for {account_name}: {e}")
             return []
     
     def check_balance_change_for_deduce(self, account_name: str, initial_balance: float, 
@@ -267,28 +356,62 @@ class DeduceTestFramework:
         return result
     
     def place_wager(self, account_name: str, line_id: str, odds: int, stake: float) -> dict:
-        """Place a single wager"""
-        play_url = urljoin(self.base_url, config.URL['mm_place_wager'])
+        """Place a single wager
+        
+        For MM accounts: uses partner/mm/place_wager endpoint
+        For Patron accounts: uses trade/private/api/v2/wagers endpoint (web API)
+        """
+        if account_name not in self.sessions:
+            raise Exception(f"Account {account_name} not logged in")
+        
+        account_type = self.sessions[account_name]['account_type']
+        is_patron = account_type == 'patron'
         external_id = str(uuid.uuid4())
         
-        body = {
-            'external_id': external_id,
-            'line_id': line_id,
-            'odds': odds,
-            'stake': stake
-        }
+        if is_patron:
+            # Patron accounts use web API endpoint
+            play_url = urljoin(self.base_url, 'trade/private/api/v2/wagers')
+            body = {
+                'lineID': line_id,
+                'odds': odds,
+                'stake': stake
+            }
+            logging.debug(f"Patron wager request body: {json.dumps(body)}")
+            
+            # Get headers and add web-specific headers
+            headers = self.get_auth_header(account_name)
+            headers['__source'] = 'web'
+            headers['origin'] = self.base_url.replace('api-', '')
+        else:
+            # MM accounts use MM API endpoint
+            play_url = urljoin(self.base_url, config.URL['mm_place_wager'])
+            body = {
+                'external_id': external_id,
+                'line_id': line_id,
+                'odds': odds,
+                'stake': stake
+            }
+            headers = self.get_auth_header(account_name)
         
-        response = requests.post(play_url, json=body, headers=self.get_auth_header(account_name))
+        response = requests.post(play_url, json=body, headers=headers)
         
-        if response.status_code != 200:
+        # Accept both 200 and 201 status codes
+        if response.status_code not in [200, 201]:
             error_msg = response.content.decode('utf-8')
             logging.error(f"{Colors.RED}✗ Failed to place wager for {account_name}: {error_msg}{Colors.RESET}")
             return {'success': False, 'error': error_msg, 'external_id': external_id}
         
-        wager_data = json.loads(response.content).get('data', {})
-        wager_id = wager_data.get('wager', {}).get('id', 'unknown')
+        # Parse response based on account type
+        response_json = json.loads(response.content)
+        if is_patron:
+            # Patron response format may differ, extract wager_id appropriately
+            wager_data = response_json.get('data', {})
+            wager_id = wager_data.get('id', wager_data.get('wager', {}).get('id', 'unknown'))
+        else:
+            wager_data = response_json.get('data', {})
+            wager_id = wager_data.get('wager', {}).get('id', 'unknown')
         
-        logging.info(f"{Colors.GREEN}✓ {account_name} placed wager: ${stake} at odds {odds} (ID: {wager_id[:8]}...){Colors.RESET}")
+        logging.info(f"{Colors.GREEN}✓ {account_name} placed wager: ${stake} at odds {odds} (ID: {wager_id[:8] if isinstance(wager_id, str) else wager_id}...){Colors.RESET}")
         
         return {
             'success': True,
@@ -318,7 +441,47 @@ class DeduceTestFramework:
             return False
     
     def get_available_market(self, account_name: str) -> Optional[dict]:
-        """Get an available market for testing - prioritizes NBA, NFL, MLB, MLS tournaments"""
+        """Get an available market for testing.
+        - If env var TARGET_EVENT_ID is set, try to fetch a market for that event first.
+        - Otherwise, prioritizes NBA, NFL, MLB, MLS tournaments and returns first active market.
+        """
+        import os
+        target_event_id = os.getenv('TARGET_EVENT_ID')
+        if target_event_id:
+            try:
+                multiple_markets_url = urljoin(self.base_url, config.URL['mm_multiple_markets'])
+                markets_response = requests.get(
+                    multiple_markets_url,
+                    params={'event_ids': str(target_event_id)},
+                    headers=self.get_auth_header(account_name)
+                )
+                if markets_response.status_code == 200:
+                    markets_data = json.loads(markets_response.content).get('data', {})
+                    event_markets = markets_data.get(str(target_event_id), [])
+                    for market in event_markets:
+                        selections = market.get('selections', [])
+                        if selections:
+                            try:
+                                if isinstance(selections[0], list) and selections[0]:
+                                    line_id = selections[0][0].get('line_id')
+                                elif isinstance(selections[0], dict):
+                                    line_id = selections[0].get('line_id')
+                                else:
+                                    continue
+                                if line_id:
+                                    logging.info(f"{Colors.GREEN}✓ Found market for TARGET_EVENT_ID={target_event_id}: {market.get('type', 'unknown')}{Colors.RESET}")
+                                    return {
+                                        'event': {'event_id': int(target_event_id), 'name': market.get('event_name', 'Unknown')},
+                                        'market': market,
+                                        'line_id': line_id,
+                                    }
+                            except Exception:
+                                continue
+                logging.warning(f"Could not find active market for TARGET_EVENT_ID={target_event_id}, falling back to general search")
+            except Exception as e:
+                logging.warning(f"Error fetching markets for TARGET_EVENT_ID={target_event_id}: {e}")
+        
+        # Fallback: general search prioritizing common tournaments
         # Get tournaments
         t_url = urljoin(self.base_url, config.URL['mm_tournaments'])
         response = requests.get(t_url, headers=self.get_auth_header(account_name))
