@@ -85,6 +85,54 @@ def get_odds_ladder(framework):
         logging.error(f"Error fetching odds ladder: {e}")
         return [-500, -400, -300, -200, -150, -130, 110, 130, 150, 200, 300, 400, 500]
 
+def get_market_for_event(framework, account_name, event_id):
+    """Get market info for a specific event ID"""
+    import requests
+    from urllib.parse import urljoin
+    
+    try:
+        multiple_markets_url = urljoin(framework.base_url, config.URL['mm_multiple_markets'])
+        markets_response = requests.get(
+            multiple_markets_url,
+            params={'event_ids': str(event_id)},
+            headers=framework.get_auth_header(account_name)
+        )
+        
+        if markets_response.status_code != 200:
+            logging.error(f"Failed to get markets for event {event_id}: {markets_response.status_code}")
+            return None
+        
+        markets_data = json.loads(markets_response.content).get('data', {})
+        event_markets = markets_data.get(str(event_id), [])
+        
+        if not event_markets:
+            logging.error(f"No markets available for event {event_id}")
+            return None
+        
+        # Find first market with selections
+        for market in event_markets:
+            if market.get('selections'):
+                selections = market.get('selections', [])
+                if selections and len(selections) > 0:
+                    try:
+                        line_id = None
+                        if isinstance(selections[0], list) and len(selections[0]) > 0:
+                            line_id = selections[0][0].get('line_id')
+                        elif isinstance(selections[0], dict):
+                            line_id = selections[0].get('line_id')
+                        
+                        if line_id:
+                            event_name = market.get('event_name', 'Unknown')
+                            return {'line_id': line_id, 'event': {'name': event_name, 'event_id': event_id}}
+                    except:
+                        continue
+        
+        logging.error(f"Could not find valid line_id in event {event_id}")
+        return None
+    except Exception as e:
+        logging.error(f"Error getting market for event {event_id}: {e}")
+        return None
+
 def get_opposite_line_id(framework, account_name, event_id, current_line_id):
     """Get the opposite line_id for matching (e.g., if MM bets on Team A, get Team B's line_id)"""
     import requests
@@ -204,7 +252,7 @@ class RaceConditionTest:
             }
 
 
-def test_deduce_sp_vs_nondeduce_sp(duration=30):
+def test_deduce_sp_vs_nondeduce_sp(duration=30, event_id=None):
     """
     Test Case 1A: Deduce SP vs Non-Deduce SP
     
@@ -237,7 +285,10 @@ def test_deduce_sp_vs_nondeduce_sp(duration=30):
     
     # Get market
     print(f"{Colors.CYAN}🔍 Finding market...{Colors.RESET}")
-    market_info = framework.get_available_market('mm1')
+    if event_id:
+        market_info = get_market_for_event(framework, 'mm1', event_id)
+    else:
+        market_info = framework.get_available_market('mm1')
     
     if not market_info:
         print(f"{Colors.RED}❌ No markets available{Colors.RESET}")
@@ -359,7 +410,7 @@ def test_deduce_sp_vs_nondeduce_sp(duration=30):
     print(f"{Colors.GREEN}📄 Report saved: {report_file}{Colors.RESET}\n")
 
 
-def test_four_way_mexican_standoff(duration=30):
+def test_four_way_mexican_standoff(duration=30, event_id=None):
     """
     Test Case: 4-Way Mexican Standoff
     
@@ -440,7 +491,10 @@ def test_four_way_mexican_standoff(duration=30):
     
     # Get market
     print(f"{Colors.CYAN}🔍 Finding market...{Colors.RESET}")
-    market_info = framework.get_available_market('mm1')
+    if event_id:
+        market_info = get_market_for_event(framework, 'mm1', event_id)
+    else:
+        market_info = framework.get_available_market('mm1')
     
     if not market_info:
         print(f"{Colors.RED}❌ No markets available{Colors.RESET}")
@@ -588,7 +642,7 @@ def test_four_way_mexican_standoff(duration=30):
     print(f"{Colors.GREEN}📄 Report saved: {report_file}{Colors.RESET}\n")
 
 
-def test_rapid_fire_race(duration=20, bets_per_second=40):
+def test_rapid_fire_race(duration=20, bets_per_second=40, event_id=None):
     """
     Test Case: Rapid Fire Race Condition
     
@@ -622,7 +676,10 @@ def test_rapid_fire_race(duration=20, bets_per_second=40):
     
     # Get market
     print(f"{Colors.CYAN}🔍 Finding market...{Colors.RESET}")
-    market_info = framework.get_available_market('mm1')
+    if event_id:
+        market_info = get_market_for_event(framework, 'mm1', event_id)
+    else:
+        market_info = framework.get_available_market('mm1')
     
     if not market_info:
         print(f"{Colors.RED}❌ No markets available{Colors.RESET}")
@@ -773,7 +830,7 @@ def test_rapid_fire_race(duration=20, bets_per_second=40):
     print(f"{Colors.GREEN}📄 Report saved: {report_file}{Colors.RESET}\n")
 
 
-def test_simultaneous_burst():
+def test_simultaneous_burst(event_id=None):
     """
     Test Case: Simultaneous Burst
     
@@ -822,7 +879,10 @@ def test_simultaneous_burst():
     
     # Get market
     print(f"{Colors.CYAN}🔍 Finding market...{Colors.RESET}")
-    market_info = framework.get_available_market('mm1')
+    if event_id:
+        market_info = get_market_for_event(framework, 'mm1', event_id)
+    else:
+        market_info = framework.get_available_market('mm1')
     
     if not market_info:
         print(f"{Colors.RED}❌ No markets available{Colors.RESET}")
@@ -938,7 +998,7 @@ def test_simultaneous_burst():
     print(f"{Colors.GREEN}📄 Report saved: {report_file}{Colors.RESET}\n")
 
 
-def test_deduce_accounts_get_matched(duration=30):
+def test_deduce_accounts_get_matched(duration=30, event_id=None):
     """
     Test Case: Deduce Accounts Get Matched
     
@@ -1016,7 +1076,10 @@ def test_deduce_accounts_get_matched(duration=30):
     
     # Get market
     print(f"{Colors.CYAN}🔍 Finding market...{Colors.RESET}")
-    market_info = framework.get_available_market('mm1')
+    if event_id:
+        market_info = get_market_for_event(framework, 'mm1', event_id)
+    else:
+        market_info = framework.get_available_market('mm1')
     
     if not market_info:
         print(f"{Colors.RED}❌ No markets available{Colors.RESET}")
@@ -1366,7 +1429,7 @@ def test_deduce_accounts_get_matched(duration=30):
     print(f"{Colors.GREEN}📄 Report saved: {report_file}{Colors.RESET}\n")
 
 
-def test_patron_matches_mm_wagers(duration=30):
+def test_patron_matches_mm_wagers(duration=30, event_id=None):
     """
     Test Case: Patron Matches MM Wagers
     
@@ -1426,7 +1489,10 @@ def test_patron_matches_mm_wagers(duration=30):
     
     # Get market
     print(f"{Colors.CYAN}🔍 Finding market...{Colors.RESET}")
-    market_info = framework.get_available_market('mm1')
+    if event_id:
+        market_info = get_market_for_event(framework, 'mm1', event_id)
+    else:
+        market_info = framework.get_available_market('mm1')
     
     if not market_info:
         print(f"{Colors.RED}❌ No markets available{Colors.RESET}")
@@ -1470,12 +1536,12 @@ def test_patron_matches_mm_wagers(duration=30):
                     with lock:
                         wager_counts[account_name] = count
                     
-                    # Add to queue for patrons to match
+                    # Add to queue for patrons to match (with actual odds used)
                     with queue_lock:
                         mm_bet_queue.append({
                             'mm_account': account_name,
                             'line_id': line_id,
-                            'odds': 150,
+                            'odds': odds,  # Use actual odds, not hardcoded 150
                             'stake': 1.0,
                             'timestamp': time.time()
                         })
@@ -3101,18 +3167,419 @@ def test_live_event_5s_delay(event_id):
     print(f"{Colors.GREEN}📄 Report saved: {report_file}{Colors.RESET}\n")
 
 
+def test_flexible_cancel_race(duration=30, cancel_rate=0.5, event_id=None, use_deduce=True, use_mm1=True, use_mm2=True, use_patron=True):
+    """
+    Flexible Cancel Race Test - Can toggle deduce/non-deduce accounts
+    
+    Args:
+        duration: Test duration in seconds
+        cancel_rate: Probability of canceling each wager (0.0-1.0)
+        event_id: Specific event ID to test (optional)
+        use_deduce: If True, use deduce accounts; if False, use only non-deduce
+        use_mm1: Include MM1 account (deduce)
+        use_mm2: Include MM2 account (non-deduce)
+        use_patron: Include Patron account(s)
+    """
+    print(f"\n{Colors.BOLD}{Colors.MAGENTA}{'='*70}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.MAGENTA}Test: Flexible Cancel Race{Colors.RESET}")
+    if event_id:
+        print(f"{Colors.BOLD}{Colors.MAGENTA}Event ID: {event_id}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.MAGENTA}Mode: {'DEDUCE + NON-DEDUCE' if use_deduce else 'NON-DEDUCE ONLY'}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.MAGENTA}{'='*70}{Colors.RESET}\n")
+    
+    framework = DeduceTestFramework(environment=config.ENVIRONMENT)
+    test = RaceConditionTest(framework)
+    
+    # Setup accounts based on parameters
+    print(f"{Colors.CYAN}📦 Setting up accounts...{Colors.RESET}\n")
+    
+    accounts = {}
+    
+    # MM1 (deduce) - only if use_deduce and use_mm1
+    if use_deduce and use_mm1:
+        mm1_creds = config.get_account_credentials(1, config.ENVIRONMENT)
+        framework.login_account('mm1', mm1_creds, account_type='mm')
+        accounts['mm1'] = {'type': 'mm', 'behavior': 'deduce'}
+        print(f"{Colors.GREEN}✅ MM1 (DEDUCE) logged in{Colors.RESET}")
+    
+    # MM2 (non-deduce) - only if use_mm2
+    if use_mm2:
+        mm2_creds = config.get_account_credentials(2, config.ENVIRONMENT)
+        framework.login_account('mm2', mm2_creds, account_type='mm')
+        accounts['mm2'] = {'type': 'mm', 'behavior': 'normal'}
+        print(f"{Colors.GREEN}✅ MM2 (NON-DEDUCE) logged in{Colors.RESET}")
+    
+    # Patron deduce - only if use_deduce and use_patron
+    if use_deduce and use_patron:
+        patron_deduce_creds = {'email': 'deduct.sanbox.test1@yopmail.com', 'password': 'Matkhau1$'}
+        framework.login_account('patron_deduce', patron_deduce_creds, account_type='patron')
+        accounts['patron_deduce'] = {'type': 'patron', 'behavior': 'deduce'}
+        print(f"{Colors.GREEN}✅ Patron deduce logged in{Colors.RESET}")
+    
+    # Patron non-deduce - only if use_patron
+    if use_patron:
+        patron_config = config.load_user_config(f'user_info_patron_{config.ENVIRONMENT}.json')
+        patron_nondeduce_creds = {'username': patron_config['email'], 'password': patron_config['password']}
+        framework.login_account('patron_nondeduce', patron_nondeduce_creds, account_type='patron')
+        accounts['patron_nondeduce'] = {'type': 'patron', 'behavior': 'normal'}
+        print(f"{Colors.GREEN}✅ Patron non-deduce logged in{Colors.RESET}")
+    
+    if not accounts:
+        print(f"{Colors.RED}❌ No accounts configured!{Colors.RESET}")
+        return
+    
+    print()
+    
+    # Get initial balances
+    account_names = list(accounts.keys())
+    initial_snapshot = test.snapshot_balances(account_names, 'initial')
+    
+    for acc_name in account_names:
+        acc_info = accounts[acc_name]
+        balance = initial_snapshot['balances'][acc_name]
+        print(f"{Colors.CYAN}{acc_name} ({acc_info['behavior']} {acc_info['type']}): ${balance:,.2f}{Colors.RESET}")
+    print()
+    
+    # Get market
+    if event_id:
+        print(f"{Colors.CYAN}🔍 Getting markets for event {event_id}...{Colors.RESET}")
+        import requests
+        from urllib.parse import urljoin
+        
+        # Use first MM account for API calls
+        mm_account = 'mm1' if 'mm1' in accounts else 'mm2'
+        
+        multiple_markets_url = urljoin(framework.base_url, config.URL['mm_multiple_markets'])
+        markets_response = requests.get(
+            multiple_markets_url,
+            params={'event_ids': str(event_id)},
+            headers=framework.get_auth_header(mm_account)
+        )
+        
+        if markets_response.status_code != 200:
+            print(f"{Colors.RED}❌ Failed to get markets{Colors.RESET}")
+            return
+        
+        markets_data = json.loads(markets_response.content).get('data', {})
+        event_markets = markets_data.get(str(event_id), [])
+        
+        if not event_markets:
+            print(f"{Colors.RED}❌ No markets available{Colors.RESET}")
+            return
+        
+        # Find first market with selections
+        line_id = None
+        event_name = "Unknown"
+        for market in event_markets:
+            if market.get('selections'):
+                selections = market.get('selections', [])
+                if selections and len(selections) > 0:
+                    try:
+                        if isinstance(selections[0], list) and len(selections[0]) > 0:
+                            line_id = selections[0][0].get('line_id')
+                        elif isinstance(selections[0], dict):
+                            line_id = selections[0].get('line_id')
+                        
+                        if line_id:
+                            event_name = market.get('event_name', 'Unknown')
+                            break
+                    except:
+                        continue
+        
+        if not line_id:
+            print(f"{Colors.RED}❌ Could not find valid line_id{Colors.RESET}")
+            return
+        
+        print(f"{Colors.GREEN}✅ Event: {event_name} (ID: {event_id}){Colors.RESET}")
+    else:
+        print(f"{Colors.CYAN}🔍 Finding active market...{Colors.RESET}")
+        mm_account = 'mm1' if 'mm1' in accounts else 'mm2'
+        market_info = framework.get_available_market(mm_account)
+        
+        if not market_info:
+            print(f"{Colors.RED}❌ No markets available{Colors.RESET}")
+            return
+        
+        line_id = market_info['line_id']
+        event_id = market_info.get('event', {}).get('event_id')
+        event_name = market_info.get('event', {}).get('name', 'Unknown')
+        print(f"{Colors.GREEN}✅ Market: {event_name}{Colors.RESET}")
+    
+    print(f"{Colors.CYAN}Line ID: {line_id[:16]}...{Colors.RESET}\n")
+    
+    # Fetch odds ladder
+    print(f"{Colors.YELLOW}🎯 Fetching odds ladder...{Colors.RESET}")
+    odds_ladder = get_odds_ladder(framework)
+    print(f"{Colors.GREEN}✅ Loaded {len(odds_ladder)} odds values{Colors.RESET}")
+    
+    # Get opposite line_id for patrons
+    mm_account = 'mm1' if 'mm1' in accounts else 'mm2'
+    print(f"{Colors.YELLOW}🔍 Finding opposite line_id...{Colors.RESET}")
+    opposite_line_id = get_opposite_line_id(framework, mm_account, event_id, line_id)
+    
+    if not opposite_line_id:
+        print(f"{Colors.YELLOW}⚠️  Using same line_id for patrons{Colors.RESET}\n")
+        opposite_line_id = line_id
+    else:
+        print(f"{Colors.GREEN}✅ Opposite line: {opposite_line_id[:16]}...{Colors.RESET}\n")
+    
+    # Test execution
+    print(f"{Colors.BOLD}🚀 Starting {duration}s place & cancel test...{Colors.RESET}")
+    print(f"{Colors.CYAN}   Cancel rate: {cancel_rate*100:.0f}%{Colors.RESET}")
+    print(f"{Colors.CYAN}   MM accounts: {', '.join([a for a in accounts if accounts[a]['type'] == 'mm'])}{Colors.RESET}")
+    print(f"{Colors.CYAN}   Patron accounts: {', '.join([a for a in accounts if accounts[a]['type'] == 'patron'])}{Colors.RESET}\n")
+    
+    # Shared data structures
+    mm_wagers = {acc: [] for acc in accounts if accounts[acc]['type'] == 'mm'}
+    cancelled_wagers = {acc: [] for acc in accounts if accounts[acc]['type'] == 'mm'}
+    matched_by_patrons = []
+    errors = []
+    lock = threading.Lock()
+    
+    mm_wager_queue = []
+    queue_lock = threading.Lock()
+    
+    bet_placement_times = []
+    bet_delays_lock = threading.Lock()
+    
+    def mm_place_and_cancel_worker(account_name: str):
+        """MM worker: Place and randomly cancel wagers"""
+        count = 0
+        cancelled = 0
+        start_time = time.time()
+        
+        while time.time() - start_time < duration:
+            try:
+                mm_odds = random.choice([o for o in odds_ladder if o > 0])
+                placement_time = time.time()
+                
+                result = framework.place_wager(account_name, line_id, mm_odds, 2.0)
+                response_time = time.time()
+                
+                if result.get('success'):
+                    count += 1
+                    wager_data = result.get('data', {})
+                    wager = wager_data.get('wager', {})
+                    wager_id = wager.get('id') or wager.get('wager_id')
+                    external_id = wager.get('external_id')
+                    
+                    processing_delay = response_time - placement_time
+                    
+                    with bet_delays_lock:
+                        bet_placement_times.append({
+                            'account': account_name,
+                            'wager_id': wager_id,
+                            'processing_delay': processing_delay
+                        })
+                    
+                    wager_info = {
+                        'account': account_name,
+                        'wager_id': wager_id,
+                        'external_id': external_id,
+                        'odds': mm_odds,
+                        'placed_at': placement_time
+                    }
+                    
+                    with lock:
+                        mm_wagers[account_name].append(wager_info)
+                    
+                    with queue_lock:
+                        mm_wager_queue.append(wager_info)
+                    
+                    # Randomly cancel
+                    if random.random() < cancel_rate and wager_id and external_id:
+                        cancel_success = framework.cancel_wager(account_name, external_id, wager_id)
+                        
+                        if cancel_success:
+                            cancelled += 1
+                            with lock:
+                                cancelled_wagers[account_name].append(wager_id)
+                        
+                        if count % 20 == 0:
+                            color = Colors.CYAN if accounts[account_name]['behavior'] == 'deduce' else Colors.MAGENTA
+                            print(f"{color}📊 {account_name}: {count} placed, {cancelled} cancelled{Colors.RESET}")
+                    elif count % 20 == 0:
+                        color = Colors.CYAN if accounts[account_name]['behavior'] == 'deduce' else Colors.YELLOW
+                        print(f"{color}📊 {account_name}: {count} placed{Colors.RESET}")
+                else:
+                    with lock:
+                        errors.append({'account': account_name, 'error': result.get('error'), 'type': 'PLACE'})
+            
+            except Exception as e:
+                with lock:
+                    errors.append({'account': account_name, 'error': str(e), 'type': 'EXCEPTION'})
+            
+            time.sleep(random.uniform(0.01, 0.03))
+        
+        return count, cancelled
+    
+    def patron_matcher_worker(account_name: str):
+        """Patron: Match MM wagers"""
+        count = 0
+        start_time = time.time()
+        
+        while time.time() - start_time < duration:
+            try:
+                mm_wager = None
+                
+                with queue_lock:
+                    if mm_wager_queue:
+                        mm_wager = mm_wager_queue.pop(0)
+                
+                if mm_wager:
+                    opposite_odds = -mm_wager['odds']
+                    
+                    result = framework.place_wager(
+                        account_name,
+                        opposite_line_id,
+                        opposite_odds,
+                        2.0
+                    )
+                    
+                    if result.get('success'):
+                        count += 1
+                        with lock:
+                            matched_by_patrons.append({
+                                'patron': account_name,
+                                'mm_wager_id': mm_wager['wager_id'],
+                                'matched_at': time.time()
+                            })
+                        
+                        if count % 10 == 0:
+                            color = Colors.CYAN if accounts[account_name]['behavior'] == 'deduce' else Colors.BLUE
+                            print(f"{color}📊 {account_name}: {count} matches{Colors.RESET}")
+                    else:
+                        with lock:
+                            errors.append({'account': account_name, 'error': result.get('error'), 'type': 'MATCH'})
+                else:
+                    time.sleep(0.01)
+            
+            except Exception as e:
+                with lock:
+                    errors.append({'account': account_name, 'error': str(e), 'type': 'EXCEPTION'})
+        
+        return count
+    
+    # Run workers
+    mm_accounts = [a for a in accounts if accounts[a]['type'] == 'mm']
+    patron_accounts = [a for a in accounts if accounts[a]['type'] == 'patron']
+    
+    with ThreadPoolExecutor(max_workers=len(accounts)) as executor:
+        futures = {}
+        
+        # Start MM workers
+        for acc in mm_accounts:
+            futures[acc] = executor.submit(mm_place_and_cancel_worker, acc)
+        
+        # Start patron workers
+        for acc in patron_accounts:
+            futures[acc] = executor.submit(patron_matcher_worker, acc)
+        
+        # Collect results
+        results = {}
+        for acc, future in futures.items():
+            try:
+                results[acc] = future.result()
+                if accounts[acc]['type'] == 'mm':
+                    placed, cancelled = results[acc]
+                    print(f"{Colors.GREEN}✅ {acc}: {placed} placed, {cancelled} cancelled{Colors.RESET}")
+                else:
+                    matched = results[acc]
+                    print(f"{Colors.GREEN}✅ {acc}: {matched} matches{Colors.RESET}")
+            except Exception as e:
+                print(f"{Colors.RED}❌ {acc}: Error - {e}{Colors.RESET}")
+    
+    # Wait for system processing
+    print(f"\n{Colors.CYAN}⏳ Waiting 5s for system processing...{Colors.RESET}\n")
+    time.sleep(5)
+    
+    # Get final balances
+    final_snapshot = test.snapshot_balances(account_names, 'final')
+    
+    # Analysis
+    print(f"{Colors.BOLD}{'='*70}{Colors.RESET}")
+    print(f"{Colors.BOLD}RESULTS{Colors.RESET}")
+    print(f"{Colors.BOLD}{'='*70}{Colors.RESET}\n")
+    
+    for acc_name in account_names:
+        acc_info = accounts[acc_name]
+        initial = initial_snapshot['balances'][acc_name]
+        final = final_snapshot['balances'][acc_name]
+        change = initial - final
+        
+        color = Colors.CYAN if acc_info['behavior'] == 'deduce' else Colors.BLUE
+        print(f"{color}{acc_name.upper()} ({acc_info['behavior']} {acc_info['type']}){Colors.RESET}")
+        print(f"  Initial:  ${initial:,.2f}")
+        print(f"  Final:    ${final:,.2f}")
+        print(f"  Change:   ${change:,.2f}\n")
+    
+    # Delay stats
+    if bet_placement_times:
+        delays = [bt['processing_delay'] for bt in bet_placement_times]
+        print(f"{Colors.BOLD}BET DELAY STATS:{Colors.RESET}")
+        print(f"  Avg: {sum(delays)/len(delays):.3f}s")
+        print(f"  Min: {min(delays):.3f}s")
+        print(f"  Max: {max(delays):.3f}s\n")
+    
+    # Error summary
+    if errors:
+        print(f"{Colors.BOLD}ERRORS: {len(errors)}{Colors.RESET}")
+        error_types = {}
+        for err in errors:
+            key = f"{err['account']}-{err['type']}"
+            error_types[key] = error_types.get(key, 0) + 1
+        for key, count in error_types.items():
+            print(f"  {key}: {count}")
+        print()
+    
+    # Save report
+    report = {
+        'test': 'flexible_cancel_race',
+        'event_id': event_id,
+        'duration': duration,
+        'cancel_rate': cancel_rate,
+        'use_deduce': use_deduce,
+        'accounts': accounts,
+        'results': results,
+        'errors': errors,
+        'bet_delays': bet_placement_times[:20] if bet_placement_times else None,
+        'balance_changes': {
+            acc: {
+                'initial': initial_snapshot['balances'][acc],
+                'final': final_snapshot['balances'][acc],
+                'change': initial_snapshot['balances'][acc] - final_snapshot['balances'][acc]
+            } for acc in account_names
+        }
+    }
+    
+    mode_str = 'deduce' if use_deduce else 'nondeduce'
+    report_file = f"flexible_cancel_{mode_str}_{event_id or 'auto'}_{int(time.time())}.json"
+    with open(report_file, 'w') as f:
+        json.dump(report, f, indent=2)
+    
+    print(f"{Colors.GREEN}📄 Report saved: {report_file}{Colors.RESET}\n")
+
+
 if __name__ == '__main__':
     import argparse
     
     parser = argparse.ArgumentParser(description='Run deduce race condition tests')
-    parser.add_argument('--test', choices=['1a', '4way', 'rapid', 'burst', 'patron_mm', 'deduce_matched', 'aggressive', 'cancel_bug', 'live_delay', 'all'],
+    parser.add_argument('--test', choices=['1a', '4way', 'rapid', 'burst', 'patron_mm', 'deduce_matched', 'aggressive', 'cancel_bug', 'live_delay', 'flexible', 'all'],
                        default='all', help='Which test to run')
     parser.add_argument('--duration', type=int, default=30, 
                        help='Test duration in seconds (for applicable tests)')
     parser.add_argument('--rps', type=float, default=None,
                        help='Target total requests per second across MMs (place+cancel). Example: 40')
     parser.add_argument('--event-id', type=int, default=None,
-                       help='Specific event ID to use (for cancel_bug and aggressive tests)')
+                       help='Specific event ID to use for testing (applies to all tests)')
+    parser.add_argument('--no-deduce', action='store_true',
+                       help='Exclude deduce accounts (for flexible test)')
+    parser.add_argument('--no-mm1', action='store_true',
+                       help='Exclude MM1 account (for flexible test)')
+    parser.add_argument('--no-mm2', action='store_true',
+                       help='Exclude MM2 account (for flexible test)')
+    parser.add_argument('--no-patron', action='store_true',
+                       help='Exclude patron accounts (for flexible test)')
     
     args = parser.parse_args()
     
@@ -3121,22 +3588,22 @@ if __name__ == '__main__':
     print(f"{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.RESET}\n")
     
     if args.test in ['1a', 'all']:
-        test_deduce_sp_vs_nondeduce_sp(duration=args.duration)
+        test_deduce_sp_vs_nondeduce_sp(duration=args.duration, event_id=args.event_id)
     
     if args.test in ['4way', 'all']:
-        test_four_way_mexican_standoff(duration=args.duration)
+        test_four_way_mexican_standoff(duration=args.duration, event_id=args.event_id)
     
     if args.test in ['rapid', 'all']:
-        test_rapid_fire_race(duration=args.duration, bets_per_second=10)
+        test_rapid_fire_race(duration=args.duration, bets_per_second=10, event_id=args.event_id)
     
     if args.test in ['burst', 'all']:
-        test_simultaneous_burst()
+        test_simultaneous_burst(event_id=args.event_id)
     
     if args.test in ['patron_mm', 'all']:
-        test_patron_matches_mm_wagers(duration=args.duration)
+        test_patron_matches_mm_wagers(duration=args.duration, event_id=args.event_id)
     
     if args.test in ['deduce_matched']:
-        test_deduce_accounts_get_matched(duration=args.duration)
+        test_deduce_accounts_get_matched(duration=args.duration, event_id=args.event_id)
     
     if args.test in ['aggressive']:
         test_aggressive_all_lines(duration=args.duration, event_id=args.event_id)
@@ -3153,6 +3620,17 @@ if __name__ == '__main__':
             print(f"{Colors.RED}Error: --event-id is required for live_delay test{Colors.RESET}")
         else:
             test_live_event_5s_delay(event_id=args.event_id)
+    
+    if args.test in ['flexible']:
+        test_flexible_cancel_race(
+            duration=args.duration,
+            cancel_rate=0.5,
+            event_id=args.event_id,
+            use_deduce=not args.no_deduce,
+            use_mm1=not args.no_mm1,
+            use_mm2=not args.no_mm2,
+            use_patron=not args.no_patron
+        )
     
     print(f"\n{Colors.BOLD}{Colors.GREEN}{'='*70}{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.GREEN}ALL TESTS COMPLETED{Colors.RESET}")
