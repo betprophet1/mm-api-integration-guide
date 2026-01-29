@@ -1088,6 +1088,15 @@ def test_deduce_accounts_get_matched(duration=30, event_id=None):
     event_name = market_info.get('event', {}).get('name', 'Unknown')
     line_id = market_info['line_id']
     print(f"{Colors.GREEN}✅ Market: {event_name}{Colors.RESET}\n")
+
+    # Determine opposite line for matchers
+    print(f"{Colors.YELLOW}🔍 Resolving opposite line for matchers...{Colors.RESET}")
+    match_line_id = get_opposite_line_id(framework, 'mm1', event_id or market_info.get('event', {}).get('event_id'), line_id)
+    if not match_line_id:
+        print(f"{Colors.YELLOW}⚠️  Opposite line not found. Falling back to same line (may not match depending on market model).{Colors.RESET}")
+        match_line_id = line_id
+    else:
+        print(f"{Colors.GREEN}✅ Opposite line: {match_line_id[:16]}...{Colors.RESET}")
     
     # Test execution
     print(f"{Colors.BOLD}🚀 Starting {duration}s test...{Colors.RESET}")
@@ -1165,10 +1174,10 @@ def test_deduce_accounts_get_matched(duration=30, event_id=None):
                         deduce_bet = deduce_bet_queue.pop(0)
                 
                 if deduce_bet:
-                    # Place opposite bet to match
+                    # Place opposite bet to match (use opposite selection line)
                     result = framework.place_wager(
                         account_name,
-                        deduce_bet['line_id'],
+                        match_line_id,
                         -150,  # Opposite odds
                         1.0
                     )
@@ -1429,7 +1438,7 @@ def test_deduce_accounts_get_matched(duration=30, event_id=None):
     print(f"{Colors.GREEN}📄 Report saved: {report_file}{Colors.RESET}\n")
 
 
-def test_patron_matches_mm_wagers(duration=30, event_id=None):
+def test_patron_matches_mm_wagers(duration=30, event_id=None, aggression=1.0):
     """
     Test Case: Patron Matches MM Wagers
     
@@ -1501,6 +1510,15 @@ def test_patron_matches_mm_wagers(duration=30, event_id=None):
     event_name = market_info.get('event', {}).get('name', 'Unknown')
     line_id = market_info['line_id']
     print(f"{Colors.GREEN}✅ Market: {event_name}{Colors.RESET}")
+
+    # Determine opposite line for patrons to match
+    print(f"{Colors.YELLOW}🔍 Resolving opposite line for patrons...{Colors.RESET}")
+    opposite_line_id = get_opposite_line_id(framework, 'mm1', event_id or market_info.get('event', {}).get('event_id'), line_id)
+    if not opposite_line_id:
+        print(f"{Colors.YELLOW}⚠️  Opposite line not found. Falling back to same line (may not match depending on market model).{Colors.RESET}")
+        opposite_line_id = line_id
+    else:
+        print(f"{Colors.GREEN}✅ Opposite line: {opposite_line_id[:16]}...{Colors.RESET}")
     
     # Fetch odds ladder
     print(f"{Colors.YELLOW}🎯 Fetching odds ladder...{Colors.RESET}")
@@ -1555,7 +1573,8 @@ def test_patron_matches_mm_wagers(duration=30, event_id=None):
                 with lock:
                     errors.append({'account': account_name, 'error': str(e), 'type': 'EXCEPTION'})
             
-            time.sleep(0.1)  # 4x more aggressive
+            # Scale pacing by aggression factor (higher = faster)
+            time.sleep(max(0.005, 0.1 / max(aggression, 0.1)))  # base 0.1s -> halve when aggression=2
         
         return count
     
@@ -1574,14 +1593,14 @@ def test_patron_matches_mm_wagers(duration=30, event_id=None):
                         mm_bet = mm_bet_queue.pop(0)
                 
                 if mm_bet:
-                    # Small delay to simulate patron reaction time (4x more aggressive)
-                    time.sleep(0.025)
+                    # Small delay to simulate patron reaction time, scaled by aggression
+                    time.sleep(max(0.003, 0.025 / max(aggression, 0.1)))
                     
                     # Place opposite bet (negative odds)
                     odds = random.choice(negative_odds)
                     result = framework.place_wager(
                         account_name, 
-                        mm_bet['line_id'], 
+                        opposite_line_id, 
                         odds,
                         1.0
                     )
@@ -1602,8 +1621,8 @@ def test_patron_matches_mm_wagers(duration=30, event_id=None):
                         with lock:
                             errors.append({'account': account_name, 'error': result.get('error'), 'type': 'MATCH'})
                 else:
-                    # No bets to match, wait a bit (4x more aggressive)
-                    time.sleep(0.025)
+                    # No bets to match, wait a bit (scaled by aggression)
+                    time.sleep(max(0.003, 0.025 / max(aggression, 0.1)))
                     
             except Exception as e:
                 with lock:
@@ -3572,6 +3591,8 @@ if __name__ == '__main__':
                        help='Target total requests per second across MMs (place+cancel). Example: 40')
     parser.add_argument('--event-id', type=int, default=None,
                        help='Specific event ID to use for testing (applies to all tests)')
+    parser.add_argument('--aggression', type=float, default=1.0,
+                       help='Speed multiplier for certain tests (e.g., patron_mm). 2.0 = ~2x faster pacing')
     parser.add_argument('--no-deduce', action='store_true',
                        help='Exclude deduce accounts (for flexible test)')
     parser.add_argument('--no-mm1', action='store_true',
@@ -3600,7 +3621,7 @@ if __name__ == '__main__':
         test_simultaneous_burst(event_id=args.event_id)
     
     if args.test in ['patron_mm', 'all']:
-        test_patron_matches_mm_wagers(duration=args.duration, event_id=args.event_id)
+        test_patron_matches_mm_wagers(duration=args.duration, event_id=args.event_id, aggression=args.aggression)
     
     if args.test in ['deduce_matched']:
         test_deduce_accounts_get_matched(duration=args.duration, event_id=args.event_id)
