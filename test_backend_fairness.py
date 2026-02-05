@@ -37,8 +37,14 @@ user_metrics = defaultdict(lambda: {
 metrics_lock = threading.Lock()
 
 
-def load_mm_accounts(environment='sandbox', num_accounts=2):
-    """Load multiple MM accounts for testing"""
+def load_mm_accounts(environment='sandbox', num_accounts=2, start_account=1):
+    """Load multiple MM accounts for testing
+    
+    Args:
+        environment: sandbox or staging
+        num_accounts: number of accounts to load
+        start_account: starting account number (default: 1)
+    """
     import os
     
     # Set environment
@@ -48,7 +54,7 @@ def load_mm_accounts(environment='sandbox', num_accounts=2):
     
     mm_instances = {}
     
-    for account_num in range(1, num_accounts + 1):
+    for account_num in range(start_account, start_account + num_accounts):
         try:
             credentials = config.get_account_credentials(account_num, environment)
             
@@ -90,6 +96,7 @@ def load_mm_accounts(environment='sandbox', num_accounts=2):
                 logging.warning(f"⚠️  Could not extract UUID ({str(e)}), using: {user_id}")
             
             mm_instance.user_id = user_id
+            mm_instance.account_num = account_num  # Store account number for token refresh
             mm_instances[user_id] = mm_instance
             logging.info(f"✅ Loaded account {account_num}: {user_id} (Balance: ${mm_instance.balance:.2f})")
             
@@ -100,8 +107,21 @@ def load_mm_accounts(environment='sandbox', num_accounts=2):
     return mm_instances
 
 
-def place_wager_with_tracking(mm_instance, user_id, line_id, odds, wager_num, show_detailed_logs=False):
-    """Place a single wager and track metrics"""
+def refresh_account_token(mm_instance, user_id, account_num, environment):
+    """Refresh authentication token for an account"""
+    try:
+        logging.info(f"🔄 Refreshing token for account {account_num} ({user_id[:8]}...)")
+        mm_instance.mm_login()
+        logging.info(f"✅ Token refreshed for account {account_num}")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Failed to refresh token for account {account_num}: {str(e)}")
+        return False
+
+
+def place_wager_with_tracking(mm_instance, user_id, line_id, odds, wager_num, show_detailed_logs=False, 
+                              account_num=None, environment='sandbox'):
+    """Place a single wager and track metrics with automatic token refresh on 401"""
     import requests
     from urllib.parse import urljoin
     import uuid
@@ -111,73 +131,93 @@ def place_wager_with_tracking(mm_instance, user_id, line_id, odds, wager_num, sh
         'external_id': external_id,
         'line_id': line_id,
         'odds': odds,
-        'stake': 1.0
+        'stake': 2.0
     }
     
-    try:
-        # Log when request starts (to prove parallelism)
-        if show_detailed_logs:
-            logging.info(f"🚀 [{time.strftime('%H:%M:%S.%f')[:-3]}] User {user_id[:8]} - Wager #{wager_num:03d} STARTING")
-        
-        request_start = time.time()
-        play_url = urljoin(mm_instance.base_url, config.URL['mm_place_wager'])
-        response = requests.post(play_url, json=body, headers=mm_instance._MMInteractions__get_auth_header())
-        response_time = time.time() - request_start
-        
-        with metrics_lock:
-            user_metrics[user_id]['response_times'].append(response_time)
-            user_metrics[user_id]['timestamps'].append(time.time())
-        
-        if response.status_code == 200:
-            response_data = response.json()
-            wager_data = response_data.get('data', {})
-            if 'wager' in wager_data and 'id' in wager_data['wager']:
-                wager_id = wager_data['wager']['id']
-                wager_status = wager_data['wager'].get('status', 'unknown')
-                
-                with metrics_lock:
-                    user_metrics[user_id]['placed'] += 1
-                    if wager_status == 'matched':
-                        user_metrics[user_id]['matched'] += 1
-                
-                # Log successful completion (to prove parallelism)
-                if show_detailed_logs:
-                    logging.info(f"✅ [{time.strftime('%H:%M:%S.%f')[:-3]}] User {user_id[:8]} - Wager #{wager_num:03d} COMPLETED ({response_time*1000:.0f}ms)")
-                
-                return {
-                    'user_id': user_id,
-                    'wager_id': wager_id,
-                    'external_id': external_id,
-                    'status': wager_status,
-                    'response_time': response_time,
-                    'wager_num': wager_num
-                }
-        else:
+    max_retries = 2
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            # Log when request starts (to prove parallelism)
+            if show_detailed_logs:
+                logging.info(f"🚀 [{time.strftime('%H:%M:%S.%f')[:-3]}] User {user_id[:8]} - Wager #{wager_num:03d} STARTING")
+            
+            request_start = time.time()
+            play_url = urljoin(mm_instance.base_url, config.URL['mm_place_wager'])
+            response = requests.post(play_url, json=body, headers=mm_instance._MMInteractions__get_auth_header())
+            response_time = time.time() - request_start
+            
             with metrics_lock:
-                user_metrics[user_id]['failed'] += 1
+                user_metrics[user_id]['response_times'].append(response_time)
+                user_metrics[user_id]['timestamps'].append(time.time())
             
-            # Get error details
-            try:
-                error_body = response.json()
-                error_msg = error_body.get('message', 'No error message')
-                error_code = error_body.get('code', 'No code')
-            except:
-                error_msg = response.text[:200] if response.text else 'No response body'
-                error_code = 'N/A'
-            
-            # Log first few failures for this user in detail
-            if user_metrics[user_id]['failed'] <= 3:
-                logging.error(f"❌ User {user_id} wager {wager_num} failed:")
-                logging.error(f"   HTTP Status: {response.status_code}")
-                logging.error(f"   Error Code: {error_code}")
-                logging.error(f"   Error Message: {error_msg}")
-                logging.error(f"   Line ID: {line_id}")
-                logging.error(f"   Odds: {odds}")
-            
-    except Exception as e:
-        with metrics_lock:
-            user_metrics[user_id]['failed'] += 1
-        logging.error(f"User {user_id} wager {wager_num} error: {str(e)}")
+            if response.status_code == 200:
+                response_data = response.json()
+                wager_data = response_data.get('data', {})
+                if 'wager' in wager_data and 'id' in wager_data['wager']:
+                    wager_id = wager_data['wager']['id']
+                    wager_status = wager_data['wager'].get('status', 'unknown')
+                    
+                    with metrics_lock:
+                        user_metrics[user_id]['placed'] += 1
+                        if wager_status == 'matched':
+                            user_metrics[user_id]['matched'] += 1
+                    
+                    # Log successful completion (to prove parallelism)
+                    if show_detailed_logs:
+                        logging.info(f"✅ [{time.strftime('%H:%M:%S.%f')[:-3]}] User {user_id[:8]} - Wager #{wager_num:03d} COMPLETED ({response_time*1000:.0f}ms)")
+                    
+                    return {
+                        'user_id': user_id,
+                        'wager_id': wager_id,
+                        'external_id': external_id,
+                        'status': wager_status,
+                        'response_time': response_time,
+                        'wager_num': wager_num
+                    }
+            elif response.status_code == 401:
+                # Token expired - refresh and retry
+                retry_count += 1
+                if retry_count < max_retries and account_num:
+                    logging.warning(f"⚠️  Token expired for {user_id[:8]}, refreshing... (attempt {retry_count}/{max_retries})")
+                    if refresh_account_token(mm_instance, user_id, account_num, environment):
+                        continue  # Retry the request
+                    else:
+                        break  # Failed to refresh, exit retry loop
+                else:
+                    break  # No more retries or no account_num provided
+            else:
+                with metrics_lock:
+                    user_metrics[user_id]['failed'] += 1
+                
+                # Get error details
+                try:
+                    error_body = response.json()
+                    error_msg = error_body.get('message', 'No error message')
+                    error_code = error_body.get('code', 'No code')
+                except:
+                    error_msg = response.text[:200] if response.text else 'No response body'
+                    error_code = 'N/A'
+                
+                # Log first few failures for this user in detail
+                if user_metrics[user_id]['failed'] <= 3:
+                    logging.error(f"❌ User {user_id} wager {wager_num} failed:")
+                    logging.error(f"   HTTP Status: {response.status_code}")
+                    logging.error(f"   Error Code: {error_code}")
+                    logging.error(f"   Error Message: {error_msg}")
+                    logging.error(f"   Line ID: {line_id}")
+                    logging.error(f"   Odds: {odds}")
+                break  # Exit retry loop for non-401 errors
+                
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                with metrics_lock:
+                    user_metrics[user_id]['failed'] += 1
+                logging.error(f"User {user_id} wager {wager_num} error: {str(e)}")
+                break
+            time.sleep(0.1)  # Brief delay before retry
     
     return None
 
@@ -237,7 +277,9 @@ def send_concurrent_wagers(mm_instances, markets, total_wagers, rate_limit=50, s
                     line_id,
                     odds,
                     wager_num,
-                    show_detailed_logs
+                    show_detailed_logs,
+                    mm_instance.account_num,
+                    'sandbox'  # Pass environment
                 )
                 futures.append(future)
                 wager_counter += 1
@@ -340,9 +382,9 @@ def run_backend_fairness_test(event_name, total_wagers=200, environment='sandbox
     logging.info(f"Total wagers: {total_wagers}")
     logging.info("="*70 + "\n")
     
-    # Load MM accounts
-    logging.info("📦 Loading MM accounts...")
-    mm_instances = load_mm_accounts(environment, num_accounts=5)
+    # Load MM accounts 1-2 only (MM1 deduce-enabled, MM2 non-deduce)
+    logging.info("📦 Loading MM accounts 1-2 (MM1 deduce-enabled, MM2 non-deduce)...")
+    mm_instances = load_mm_accounts(environment, num_accounts=2, start_account=1)
     
     if len(mm_instances) < 2:
         logging.error("❌ Need at least 2 MM accounts for fairness testing")
@@ -369,9 +411,12 @@ def run_backend_fairness_test(event_name, total_wagers=200, environment='sandbox
     
     # If event_name is provided, find matching events
     if event_name:
-        matching_events = mm_instance.find_event_by_name(event_name)
+        matching_events = mm_instance.find_event_by_id_or_name(event_name)
         if not matching_events:
             logging.error(f"❌ No events found matching '{event_name}'")
+            logging.info(f"\nℹ️  Available events:")
+            for evt_id, evt_data in list(mm_instance.sport_events.items())[:10]:
+                logging.info(f"   ID: {evt_id} | Name: {evt_data.get('name', 'Unknown')}")
             return
         events_to_use = matching_events[:5]  # Use up to 5 matching events
     else:
@@ -450,12 +495,13 @@ def run_backend_fairness_test(event_name, total_wagers=200, environment='sandbox
             total_spent += balance_changes[user_id]
     
     logging.info(f"\n📊 Total spent across all users: ${total_spent:,.2f}")
-    logging.info(f"   Expected (1 per wager): ${total_placed:,.2f}")
+    expected_spent = total_placed * 2.0  # $2 stake per wager
+    logging.info(f"   Expected ($2 per wager): ${expected_spent:,.2f}")
     
-    if abs(total_spent - total_placed) < 1.0:
+    if abs(total_spent - expected_spent) < 2.0:
         logging.info(f"   ✅ Balance matches expected spending!")
     else:
-        diff = abs(total_spent - total_placed)
+        diff = abs(total_spent - expected_spent)
         logging.warning(f"   ⚠️  Difference: ${diff:,.2f}")
     
     logging.info("="*70 + "\n")
@@ -521,11 +567,14 @@ ORDER BY wager_count DESC;
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Test backend fairness enhancement - Stress Test')
     parser.add_argument('--event', type=str, required=True, help='Event name to test')
-    parser.add_argument('--wagers', type=int, default=1000, help='Total wagers to send (default: 1000)')
+    parser.add_argument('--wagers', type=int, default=1000, help='Total wagers to send per iteration (default: 1000)')
     parser.add_argument('--env', type=str, default='sandbox', choices=['sandbox', 'staging'],
                        help='Environment (default: sandbox)')
     parser.add_argument('--verbose', action='store_true', help='Enable detailed per-wager logging to prove parallel execution')
     parser.add_argument('--workers', type=int, default=50, help='Max concurrent workers (default: 50, higher = faster)')
+    parser.add_argument('--continuous', action='store_true', help='Run continuously with automatic token refresh')
+    parser.add_argument('--iterations', type=int, default=0, help='Number of iterations in continuous mode (0=infinite, default: 0)')
+    parser.add_argument('--delay', type=int, default=5, help='Delay in seconds between continuous mode iterations (default: 5)')
     
     args = parser.parse_args()
     
@@ -533,6 +582,31 @@ if __name__ == '__main__':
     logging.info("BACKEND FAIRNESS STRESS TEST")
     logging.info("Testing requirement: 'For each 100 jobs in a batch, parallel by user id'")
     logging.info("Backend should handle batching and ensure fairness")
+    if args.continuous:
+        logging.info("🔄 CONTINUOUS MODE: Token auto-refresh enabled")
+        if args.iterations > 0:
+            logging.info(f"   Running {args.iterations} iterations")
+        else:
+            logging.info("   Running indefinitely (Ctrl+C to stop)")
+        logging.info(f"   Delay between iterations: {args.delay}s")
     logging.info("="*70 + "\n")
     
-    run_backend_fairness_test(args.event, args.wagers, args.env, verbose=args.verbose, max_workers=args.workers)
+    if args.continuous:
+        iteration = 0
+        try:
+            while args.iterations == 0 or iteration < args.iterations:
+                iteration += 1
+                logging.info(f"\n{'='*70}")
+                logging.info(f"🔄 ITERATION {iteration}" + (f" / {args.iterations}" if args.iterations > 0 else ""))
+                logging.info(f"{'='*70}\n")
+                
+                run_backend_fairness_test(args.event, args.wagers, args.env, verbose=args.verbose, max_workers=args.workers)
+                
+                if args.iterations == 0 or iteration < args.iterations:
+                    logging.info(f"\n⏸️  Waiting {args.delay}s before next iteration...\n")
+                    time.sleep(args.delay)
+        except KeyboardInterrupt:
+            logging.info("\n\n⏹️  Continuous mode stopped by user")
+            logging.info(f"   Completed {iteration} iteration(s)\n")
+    else:
+        run_backend_fairness_test(args.event, args.wagers, args.env, verbose=args.verbose, max_workers=args.workers)

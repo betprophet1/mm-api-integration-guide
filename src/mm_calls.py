@@ -40,10 +40,13 @@ class MMInteractions:
             'starting_balance': 0,
             'current_balance': 0,
             'total_stake_deployed': 0,
-            'max_concurrent_wagers': 0
+            'max_concurrent_wagers': 0,
+            'token_refreshes': 0,
+            're_authentications': 0
         }
         # Internal control to avoid blocking scheduler
         self._playing_thread = None
+        self._token_lock = threading.Lock()
 
     def mm_login(self) -> dict:
         """'
@@ -92,8 +95,8 @@ class MMInteractions:
         self.all_tournaments = all_tournaments
 
         # get sport events and markets of each event
-        # Filter to only NBA, MLB, and NFL tournaments
-        target_tournaments = ['NBA', 'MLB', 'NFL']
+        # Filter to only NBA, MLB, NFL, and NHL tournaments
+        target_tournaments = ['NBA', 'MLB', 'NFL', 'NHL']
         event_url = urljoin(self.base_url, config.URL['mm_events'])
         multiple_markets_url = urljoin(self.base_url, config.URL['mm_multiple_markets'])
         for one_t in all_tournaments:
@@ -272,6 +275,28 @@ class MMInteractions:
                 matching_events.append(event_data)
                 
         return matching_events
+    
+    def find_event_by_id_or_name(self, event_identifier):
+        """
+        Find events that match the given event ID or name
+        First tries to match by exact event ID, then falls back to name search
+        :param event_identifier: The event ID (int/str) or event name to search for
+        :return: List of matching events
+        """
+        matching_events = []
+        
+        # Try to match by event ID first (exact match)
+        try:
+            event_id_int = int(event_identifier)
+            if event_id_int in self.sport_events:
+                matching_events.append(self.sport_events[event_id_int])
+                return matching_events
+        except (ValueError, TypeError):
+            # Not a valid integer, skip ID search
+            pass
+        
+        # Fall back to name search (partial match)
+        return self.find_event_by_name(event_identifier)
 
     def _immediate_single_cancel(self, external_id, wager_id):
         """
@@ -848,7 +873,58 @@ class MMInteractions:
         child_thread = threading.Thread(target=self.__run_forever_in_thread, daemon=False)
         child_thread.start()
 
+    def is_token_expired(self) -> bool:
+        """Check if access token is expired or about to expire (within 60 seconds)"""
+        if 'access_expire_time' not in self.mm_session:
+            return True
+        current_time = time.time()
+        # Add 60 second buffer to refresh before expiration
+        return current_time >= (self.mm_session['access_expire_time'] - 60)
+    
+    def refresh_access_token(self) -> bool:
+        """Refresh the access token using refresh token"""
+        with self._token_lock:
+            try:
+                refresh_url = urljoin(self.base_url, config.URL['mm_refresh'])
+                response = requests.post(
+                    refresh_url,
+                    json={'refresh_token': self.mm_session['refresh_token']},
+                    headers={'Authorization': f'Bearer {self.mm_session["access_token"]}'}
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()['data']
+                    self.mm_session['access_token'] = data['access_token']
+                    self.mm_session['access_expire_time'] = data.get('access_expire_time', time.time() + 1200)
+                    self.session_stats['token_refreshes'] += 1
+                    logging.info("✅ Token refreshed successfully")
+                    return True
+                else:
+                    logging.warning(f"⚠️  Token refresh failed: {response.status_code}")
+                    return False
+            except Exception as e:
+                logging.error(f"❌ Token refresh error: {str(e)}")
+                return False
+    
+    def ensure_valid_token(self) -> bool:
+        """Ensure we have a valid token, refresh or re-authenticate if needed"""
+        if self.is_token_expired():
+            logging.info("🔄 Token expired or expiring soon, attempting refresh...")
+            if not self.refresh_access_token():
+                logging.info("🔐 Refresh failed, re-authenticating...")
+                try:
+                    self.mm_login()
+                    self.session_stats['re_authentications'] += 1
+                    logging.info("✅ Re-authentication successful")
+                    return True
+                except Exception as e:
+                    logging.error(f"❌ Re-authentication failed: {str(e)}")
+                    return False
+        return True
+    
     def __get_auth_header(self) -> dict:
+        # Ensure token is valid before returning header
+        self.ensure_valid_token()
         return {
             'Authorization': f'Bearer '
                              f'{self.mm_session["access_token"]}',
