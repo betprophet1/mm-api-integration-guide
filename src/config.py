@@ -60,6 +60,31 @@ def get_account_credentials(account_num=1, environment=None):
             config = load_user_config('user_info_account5.json')
         else:
             config = load_user_config(f'user_info_account5_{env}.json')
+    elif account_num == 6:
+        if env == 'sandbox':
+            config = load_user_config('user_info_account6.json')
+        else:
+            config = load_user_config(f'user_info_account6_{env}.json')
+    elif account_num == 7:
+        if env == 'sandbox':
+            config = load_user_config('user_info_account7.json')
+        else:
+            config = load_user_config(f'user_info_account7_{env}.json')
+    elif account_num == 8:
+        if env == 'sandbox':
+            config = load_user_config('user_info_account8.json')
+        else:
+            config = load_user_config(f'user_info_account8_{env}.json')
+    elif account_num == 9:
+        if env == 'sandbox':
+            config = load_user_config('user_info_account9.json')
+        else:
+            config = load_user_config(f'user_info_account9_{env}.json')
+    elif account_num == 10:
+        if env == 'sandbox':
+            config = load_user_config('user_info_account10.json')
+        else:
+            config = load_user_config(f'user_info_account10_{env}.json')
     elif account_num == 'patron':
         config = load_user_config(f'user_info_patron_{env}.json')
     else:

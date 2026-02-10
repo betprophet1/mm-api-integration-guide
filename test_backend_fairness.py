@@ -369,8 +369,17 @@ def analyze_fairness(mm_instances):
     logging.info("="*70 + "\n")
 
 
-def run_backend_fairness_test(event_name, total_wagers=200, environment='sandbox', verbose=False, max_workers=50):
-    """Run the backend fairness test"""
+def run_backend_fairness_test(event_name, total_wagers=200, environment='sandbox', verbose=False, max_workers=50, deduce_mode=False):
+    """Run the backend fairness test
+    
+    Args:
+        event_name: Event ID or name to test
+        total_wagers: Total number of wagers to place
+        environment: 'sandbox' or 'staging'
+        verbose: Enable detailed per-wager logging
+        max_workers: Maximum concurrent workers
+        deduce_mode: If True, include MM1 (deduce-enabled). If False, use only non-deduce accounts (MM2-3)
+    """
     import time as time_module
     test_start_time = time.time()
     
@@ -380,11 +389,16 @@ def run_backend_fairness_test(event_name, total_wagers=200, environment='sandbox
     logging.info(f"Environment: {environment}")
     logging.info(f"Target event: {event_name}")
     logging.info(f"Total wagers: {total_wagers}")
+    logging.info(f"Deduce mode: {'ENABLED (includes MM1)' if deduce_mode else 'DISABLED (non-deduce only)'}")
     logging.info("="*70 + "\n")
     
-    # Load MM accounts 1-2 only (MM1 deduce-enabled, MM2 non-deduce)
-    logging.info("📦 Loading MM accounts 1-2 (MM1 deduce-enabled, MM2 non-deduce)...")
-    mm_instances = load_mm_accounts(environment, num_accounts=2, start_account=1)
+    # Load MM accounts based on deduce mode
+    if deduce_mode:
+        logging.info("📦 Loading MM accounts 1-2 (MM1 deduce-enabled, MM2 non-deduce)...")
+        mm_instances = load_mm_accounts(environment, num_accounts=2, start_account=1)
+    else:
+        logging.info("📦 Loading MM accounts 2-3 (MM2 and MM3, non-deduce only)...")
+        mm_instances = load_mm_accounts(environment, num_accounts=2, start_account=2)
     
     if len(mm_instances) < 2:
         logging.error("❌ Need at least 2 MM accounts for fairness testing")
@@ -575,6 +589,7 @@ if __name__ == '__main__':
     parser.add_argument('--continuous', action='store_true', help='Run continuously with automatic token refresh')
     parser.add_argument('--iterations', type=int, default=0, help='Number of iterations in continuous mode (0=infinite, default: 0)')
     parser.add_argument('--delay', type=int, default=5, help='Delay in seconds between continuous mode iterations (default: 5)')
+    parser.add_argument('--deducemode', action='store_true', help='Enable deduce mode: include MM1 (deduce-enabled) with MM2. If disabled, uses MM2-3 (non-deduce only)')
     
     args = parser.parse_args()
     
@@ -600,7 +615,7 @@ if __name__ == '__main__':
                 logging.info(f"🔄 ITERATION {iteration}" + (f" / {args.iterations}" if args.iterations > 0 else ""))
                 logging.info(f"{'='*70}\n")
                 
-                run_backend_fairness_test(args.event, args.wagers, args.env, verbose=args.verbose, max_workers=args.workers)
+                run_backend_fairness_test(args.event, args.wagers, args.env, verbose=args.verbose, max_workers=args.workers, deduce_mode=args.deducemode)
                 
                 if args.iterations == 0 or iteration < args.iterations:
                     logging.info(f"\n⏸️  Waiting {args.delay}s before next iteration...\n")
@@ -609,4 +624,4 @@ if __name__ == '__main__':
             logging.info("\n\n⏹️  Continuous mode stopped by user")
             logging.info(f"   Completed {iteration} iteration(s)\n")
     else:
-        run_backend_fairness_test(args.event, args.wagers, args.env, verbose=args.verbose, max_workers=args.workers)
+        run_backend_fairness_test(args.event, args.wagers, args.env, verbose=args.verbose, max_workers=args.workers, deduce_mode=args.deducemode)
