@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Exposure Stress Test: Aggressive Multi-Account Betting
+Exposure Stress Test: MM1 & MM2 Bet & Cancel Pattern
 Target: Generate maximum exposure (GEC/LEC) through coordinated betting
-Strategy: High-frequency parallel bet placement across multiple events
+Strategy: MM1 and MM2 place opposing bets, then cancel to test matching behavior
+Pattern: Account 1 bets, Account 2 bets (opposing), both cancel to create churn
 """
 
 import argparse
@@ -20,6 +21,7 @@ from datetime import datetime
 # Global control
 should_stop = False
 bets_placed_count = 0
+bets_cancelled_count = 0
 gec_events_count = 0
 target_bets = 1000
 target_gec_events = 5
@@ -70,7 +72,7 @@ def signal_handler(sig, frame):
 
 def progress_monitor():
     """Monitor and report progress"""
-    global should_stop, bets_placed_count, gec_events_count, target_bets, target_gec_events
+    global should_stop, bets_placed_count, bets_cancelled_count, gec_events_count, target_bets, target_gec_events
     
     start_time = time.time()
     while not should_stop:
@@ -79,15 +81,18 @@ def progress_monitor():
             elapsed = time.time() - start_time
             with stats_lock:
                 placed = bets_placed_count
+                cancelled = bets_cancelled_count
                 gec_events = gec_events_count
             
             bet_rate = placed / elapsed if elapsed > 0 else 0
+            cancel_rate = cancelled / elapsed if elapsed > 0 else 0
             remaining = target_bets - placed
             eta = remaining / bet_rate if bet_rate > 0 else 0
             
             print(f"📊 PROGRESS: {placed}/{target_bets} bets ({placed/target_bets*100:.1f}%) | "
+                  f"{cancelled} cancelled | "
                   f"{gec_events}/{target_gec_events} GEC events | "
-                  f"Rate: {bet_rate:.1f} bets/s | "
+                  f"Rate: {bet_rate:.1f} bets/s, {cancel_rate:.1f} cancels/s | "
                   f"ETA: {eta/60:.1f}m")
 
 class ExposureTester:
@@ -215,6 +220,70 @@ class ExposureTester:
             print(f"❌ {self.account['name']} bet error: {e}")
         return None
     
+    def cancel_wager(self, wager_id, external_id):
+        """Cancel a single wager"""
+        global should_stop, bets_cancelled_count
+        
+        if should_stop or not self.mm_token:
+            return False
+        
+        body = {
+            'external_id': external_id,
+            'wager_id': wager_id
+        }
+        
+        try:
+            response = requests.post(f"{self.base_url}/partner/mm/cancel_wager",
+                                    json=body, headers=self.get_mm_auth_header(), timeout=10)
+            if response.status_code == 200:
+                with stats_lock:
+                    bets_cancelled_count += 1
+                return True
+            elif response.status_code == 404:
+                # Already cancelled - count as success
+                with stats_lock:
+                    bets_cancelled_count += 1
+                return True
+            else:
+                print(f"❌ {self.account['name']} cancel failed (HTTP {response.status_code}): {response.text[:200]}")
+        except Exception as e:
+            print(f"❌ {self.account['name']} cancel error: {e}")
+        return False
+    
+    def batch_cancel_wagers(self, wagers_to_cancel):
+        """Cancel a batch of wagers (max 20)"""
+        global should_stop, bets_cancelled_count
+        
+        if should_stop or not self.mm_token or not wagers_to_cancel:
+            return 0
+        
+        batch_size = min(20, len(wagers_to_cancel))
+        batch = wagers_to_cancel[:batch_size]
+        
+        batch_cancel_body = [{
+            'wager_id': w['wager_id'],
+            'external_id': w['external_id']
+        } for w in batch]
+        
+        try:
+            response = requests.post(f"{self.base_url}/partner/mm/cancel_multiple_wagers",
+                                    json={'data': batch_cancel_body}, 
+                                    headers=self.get_mm_auth_header(), timeout=10)
+            if response.status_code == 200:
+                with stats_lock:
+                    bets_cancelled_count += len(batch)
+                return len(batch)
+            elif response.status_code == 404:
+                # Already cancelled - count as success
+                with stats_lock:
+                    bets_cancelled_count += len(batch)
+                return len(batch)
+            else:
+                print(f"❌ {self.account['name']} batch cancel failed (HTTP {response.status_code}): {response.text[:200]}")
+        except Exception as e:
+            print(f"❌ {self.account['name']} batch cancel error: {e}")
+        return 0
+    
     def check_exposures(self, event_ids=None, market_ids=None):
         """Check wallet exposures (LEC) - uses MM API for SP accounts"""
         if not self.mm_token:
@@ -226,7 +295,7 @@ class ExposureTester:
 
 def generate_performance_report(environment, num_workers, elapsed_time):
     """Generate and save performance test report"""
-    global performance_data, bets_placed_count, gec_events_count, target_bets, target_gec_events
+    global performance_data, bets_placed_count, bets_cancelled_count, gec_events_count, target_bets, target_gec_events
     
     report_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     report_filename = f"exposure_stress_test_report_{report_timestamp}.txt"
@@ -241,10 +310,12 @@ def generate_performance_report(environment, num_workers, elapsed_time):
     for worker_name, stats in performance_data['worker_stats'].items():
         worker_summary.append(f"  {worker_name}:")
         worker_summary.append(f"    Bets Placed: {stats['bets_placed']}")
+        worker_summary.append(f"    Bets Cancelled: {stats.get('bets_cancelled', 0)}")
         worker_summary.append(f"    Successful Pairs: {stats['successful_pairs']}")
         worker_summary.append(f"    Errors: {stats['errors']}")
         worker_summary.append(f"    Duration: {stats['duration_seconds']:.2f}s")
         worker_summary.append(f"    Bet Rate: {stats['bet_rate']:.2f} bets/s")
+        worker_summary.append(f"    Cancel Rate: {stats.get('cancel_rate', 0):.2f} cancels/s")
         worker_summary.append("")
     
     # Generate report content
@@ -269,11 +340,13 @@ def generate_performance_report(environment, num_workers, elapsed_time):
         "RESULTS SUMMARY",
         "=" * 80,
         f"Total Bets Placed: {bets_placed_count} / {target_bets} ({success_rate:.1f}%)",
+        f"Total Bets Cancelled: {bets_cancelled_count}",
         f"GEC Events Generated: {gec_events_count} / {target_gec_events}",
         f"Total Errors: {total_errors}",
         f"Average Bet Rate: {avg_bet_rate:.2f} bets/second",
+        f"Average Cancel Rate: {bets_cancelled_count / elapsed_time if elapsed_time > 0 else 0:.2f} cancels/second",
         f"Peak Bet Rate: {max((s['bet_rate'] for s in performance_data['worker_stats'].values()), default=0):.2f} bets/second",
-        "",
+        "
         "=" * 80,
         "WORKER PERFORMANCE",
         "=" * 80,
@@ -450,8 +523,8 @@ def get_market_data(tester, event_id=None):
         if not tournaments:
             return []
         
-        # Filter to only NBA, MLB, and NFL tournaments
-        target_tournament_names = ['NBA', 'MLB', 'NFL']
+        # Filter to only NBA, MLB, NFL, and WTA tournaments
+        target_tournament_names = ['NBA', 'MLB', 'NFL', 'WTA']
         tournaments = [t for t in tournaments if t['name'] in target_tournament_names]
         
         print(f"🔍 Scanning {len(tournaments)} tournaments (NBA, MLB, NFL) to find those with ALL market types...")
@@ -661,17 +734,22 @@ def get_market_data(tester, event_id=None):
     return []
 
 def stress_test_worker(worker_id, testers, market_data, num_bets):
-    """Worker thread to place coordinated bets"""
-    global should_stop, bets_placed_count, gec_events_count, target_bets, performance_data
+    """Worker thread to place coordinated bets with bet & cancel pattern"""
+    global should_stop, bets_placed_count, bets_cancelled_count, gec_events_count, target_bets, performance_data
     
-    print(f"🔥 Worker {worker_id}: Starting with target {num_bets} bets")
+    print(f"🔥 Worker {worker_id}: Starting with target {num_bets} bets (bet & cancel pattern)")
     
     worker_start_time = time.time()
     placed_by_worker = 0
+    cancelled_by_worker = 0
     failed_attempts = 0
     max_failed_attempts = 10
     worker_errors = 0
     successful_pairs = 0
+    
+    # Buffer to track wagers for cancellation
+    wagers_buffer_acc1 = []
+    wagers_buffer_acc2 = []
     
     while not should_stop and placed_by_worker < num_bets:
         # Check global target
@@ -734,6 +812,9 @@ def stress_test_worker(worker_id, testers, market_data, num_bets):
                     break
                 time.sleep(1)
                 continue
+            else:
+                # Add to buffer for later cancellation
+                wagers_buffer_acc1.append(bet1)
                 
             time.sleep(0.5)
             
@@ -755,6 +836,9 @@ def stress_test_worker(worker_id, testers, market_data, num_bets):
                     break
                 time.sleep(1)
                 continue
+            else:
+                # Add to buffer for later cancellation
+                wagers_buffer_acc2.append(bet2)
             
             if bet1 and bet2:
                 placed_by_worker += 2
@@ -766,6 +850,17 @@ def stress_test_worker(worker_id, testers, market_data, num_bets):
                         'worker_id': worker_id,
                         'bets_placed': 2
                     })
+            
+            # Cancel wagers when buffer reaches threshold (batch cancel for efficiency)
+            if len(wagers_buffer_acc1) >= 20:
+                cancelled = testers[0].batch_cancel_wagers(wagers_buffer_acc1[:20])
+                cancelled_by_worker += cancelled
+                wagers_buffer_acc1 = wagers_buffer_acc1[20:]
+            
+            if len(wagers_buffer_acc2) >= 20:
+                cancelled = testers[1].batch_cancel_wagers(wagers_buffer_acc2[:20])
+                cancelled_by_worker += cancelled
+                wagers_buffer_acc2 = wagers_buffer_acc2[20:]
             
             # Check for GEC generation periodically
             if placed_by_worker % 20 == 0 and placed_by_worker > 0:
@@ -797,6 +892,20 @@ def stress_test_worker(worker_id, testers, market_data, num_bets):
                 break
             time.sleep(1)
     
+    # Cancel remaining wagers in buffers
+    print(f"🧹 Worker {worker_id}: Cleaning up remaining wagers...")
+    while wagers_buffer_acc1 and not should_stop:
+        cancelled = testers[0].batch_cancel_wagers(wagers_buffer_acc1[:20])
+        cancelled_by_worker += cancelled
+        wagers_buffer_acc1 = wagers_buffer_acc1[20:]
+        time.sleep(0.1)
+    
+    while wagers_buffer_acc2 and not should_stop:
+        cancelled = testers[1].batch_cancel_wagers(wagers_buffer_acc2[:20])
+        cancelled_by_worker += cancelled
+        wagers_buffer_acc2 = wagers_buffer_acc2[20:]
+        time.sleep(0.1)
+    
     worker_end_time = time.time()
     worker_duration = worker_end_time - worker_start_time
     
@@ -804,13 +913,15 @@ def stress_test_worker(worker_id, testers, market_data, num_bets):
     with stats_lock:
         performance_data['worker_stats'][f'worker_{worker_id}'] = {
             'bets_placed': placed_by_worker,
+            'bets_cancelled': cancelled_by_worker,
             'successful_pairs': successful_pairs,
             'errors': worker_errors,
             'duration_seconds': worker_duration,
-            'bet_rate': placed_by_worker / worker_duration if worker_duration > 0 else 0
+            'bet_rate': placed_by_worker / worker_duration if worker_duration > 0 else 0,
+            'cancel_rate': cancelled_by_worker / worker_duration if worker_duration > 0 else 0
         }
     
-    print(f"✅ Worker {worker_id}: Completed {placed_by_worker} bets in {worker_duration:.1f}s ({placed_by_worker/worker_duration:.1f} bets/s)")
+    print(f"✅ Worker {worker_id}: Completed {placed_by_worker} bets, {cancelled_by_worker} cancels in {worker_duration:.1f}s")
 
 def run_stress_test(num_workers=5, environment='sandbox', event_id=None):
     """
@@ -905,8 +1016,10 @@ def run_stress_test(num_workers=5, environment='sandbox', event_id=None):
     print("╠══════════════════════════════════════════════════════════════╣")
     print(f"║ ⏰ Duration:        {elapsed/60:.2f} minutes                    ║")
     print(f"║ 🎯 Bets Placed:     {bets_placed_count:,}                          ║")
+    print(f"║ ✅ Bets Cancelled:  {bets_cancelled_count:,}                          ║")
     print(f"║ 📊 GEC Events:      {gec_events_count}/{target_gec_events}                            ║")
     print(f"║ 🚀 Bet Rate:        {bets_placed_count/elapsed:.1f} bets/sec              ║")
+    print(f"║ 🔄 Cancel Rate:     {bets_cancelled_count/elapsed:.1f} cancels/sec           ║")
     for tester in testers:
         balance = performance_data['account_stats'][tester.account['name']]['balance_end']
         print(f"║ 💰 {tester.account['name']} balance: ${balance:.2f}                 ║")
