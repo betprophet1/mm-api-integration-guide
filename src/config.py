@@ -87,6 +87,13 @@ def get_account_credentials(account_num=1, environment=None):
             config = load_user_config(f'user_info_account10_{env}.json')
     elif account_num == 'patron':
         config = load_user_config(f'user_info_patron_{env}.json')
+    elif isinstance(account_num, str) and account_num.startswith('exposure_mm'):
+        # Exposure MM accounts from user_info_exposure.json
+        exposure_config = load_user_config('user_info_exposure.json')
+        config = exposure_config[account_num]
+    elif isinstance(account_num, str) and account_num.startswith('patron'):
+        # Support patron3, patron4, etc.
+        config = load_user_config(f'user_info_{account_num}_{env}.json')
     else:
         raise ValueError(f"Account {account_num} not supported")
     

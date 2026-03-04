@@ -1,444 +1,769 @@
 #!/usr/bin/env python3
 """
-Backend Fairness Test
+Race Condition Test: Bet Batch vs Cancel Batch
 
-Tests the BACKEND system's fairness enhancement:
-- Backend should batch jobs (100 at a time)
-- Backend should parallelize by user ID
-- Backend should ensure fairness across users
+Simulates the scenario where:
+- MM1 (deduce) and MM2 (non-deduce) rapidly place & cancel bets
+- Patron4 (deduce) and Patron8 (non-deduce) try to place against MM bets
 
-This script:
-1. Sends wagers from multiple MM accounts simultaneously
-2. Monitors response times and order of execution
-3. Verifies fairness in wager matching/processing
-4. Does NOT implement batching (that's backend's job)
+Two cancel strategies (both used in production):
+  1. cancel_multiple_wagers — batch cancel with SAME wager IDs from place response (primary)
+  2. cancel_all_wagers — periodic sweep cancel without wager IDs (every N cycles)
+
+Modes:
+  --deducemode    : MM1(deduce) + MM2(non-deduce) vs Patron4(deduce) + Patron8(non-deduce)
+  (default)       : MM2(non-deduce) vs Patron8(non-deduce) only
+
+Race condition target:
+  MM sends place_batch → gets wager IDs → immediately sends cancel_batch with same IDs
+  Backend receives cancel while open wager_jobs are still processing
+  Meanwhile patrons race to match before cancel goes through
+
+Usage:
+    python test_backend_fairness.py --event "20023350" --cycles 50
+    python test_backend_fairness.py --event "20023350" --cycles 100 --batch-size 10 --deducemode
+    python test_backend_fairness.py --event "20023350" --cycles 20 --verbose --workers 50
 """
 
 import argparse
 import time
 import threading
+import random
+import json
+import os
+import sys
+import uuid
+import base64
+import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
-import json
+from urllib.parse import urljoin
+from datetime import datetime
 
 from src import mm_calls
 from src.log import logging
 from src import config
 
-# Metrics tracking
+# ============================================================================
+# Global shared state
+# ============================================================================
+# Patron bet queue: MM places bets → adds line_id/odds here → Patron picks up
+patron_bet_queue = []
+patron_queue_lock = threading.Lock()
+
+# Race condition metrics
+race_metrics = {
+    'total_cycles': 0,
+    'total_bets_placed': 0,
+    'total_bets_place_failed': 0,
+    # batch cancel (cancel_multiple_wagers) metrics
+    'batch_cancel_sent': 0,
+    'batch_cancel_succeeded': 0,
+    'batch_cancel_failed': 0,
+    'batch_cancel_per_wager_ok': 0,
+    'batch_cancel_per_wager_fail': 0,
+    # cancel_all metrics
+    'cancel_all_sent': 0,
+    'cancel_all_succeeded': 0,
+    'cancel_all_failed': 0,
+    # combined cancel failure breakdown
+    'cancel_fail_still_processing': 0,  # Race condition: bet batch still processing
+    'cancel_fail_already_matched': 0,   # Patron matched before cancel arrived
+    'cancel_fail_already_cancelled': 0, # Already cancelled
+    'cancel_fail_not_found': 0,         # 404 - wager not found
+    'cancel_fail_placing': 0,           # 409 - wager is still placing (bet delay)
+    'cancel_fail_other': 0,             # Other failures
+    'patron_bets_attempted': 0,
+    'patron_bets_succeeded': 0,
+    'patron_bets_failed': 0,
+    'race_condition_gaps': [],           # Actual time gaps between place fire and cancel fire
+    'cancel_error_details': [],          # Detailed error messages for analysis
+}
+race_lock = threading.Lock()
+
+# Per-user metrics
 user_metrics = defaultdict(lambda: {
     'placed': 0,
-    'matched': 0,
     'cancelled': 0,
-    'failed': 0,
-    'response_times': [],
-    'timestamps': []
+    'cancel_failed': 0,
+    'matched_by_patron': 0,
+    'response_times_place': [],
+    'response_times_cancel': [],
 })
-metrics_lock = threading.Lock()
 
 
-def load_mm_accounts(environment='sandbox', num_accounts=2, start_account=1):
-    """Load multiple MM accounts for testing
-    
-    Args:
-        environment: sandbox or staging
-        num_accounts: number of accounts to load
-        start_account: starting account number (default: 1)
-    """
-    import os
-    
-    # Set environment
-    os.environ['MM_ENVIRONMENT'] = environment
-    import importlib
-    importlib.reload(config)
-    
-    mm_instances = {}
-    
-    for account_num in range(start_account, start_account + num_accounts):
-        try:
-            credentials = config.get_account_credentials(account_num, environment)
-            
-            mm_instance = mm_calls.MMInteractions()
-            mm_instance.mm_keys = {
-                'access_key': credentials['access_key'],
-                'secret_key': credentials['secret_key']
-            }
-            
-            mm_instance.mm_login()
-            mm_instance.get_balance()
-            mm_instance.seeding()
-            
-            # Extract the actual partner_id (UUID) from the session
-            # This is what the backend uses for tracking
-            import base64
-            access_token = mm_instance.mm_session.get('access_token', '')
-            try:
-                # JWT format: header.payload.signature
-                # Decode payload (second part) without verification
-                parts = access_token.split('.')
-                if len(parts) >= 2:
-                    # Add padding if needed
-                    payload = parts[1]
-                    padding = 4 - (len(payload) % 4)
-                    if padding != 4:
-                        payload += '=' * padding
-                    
-                    decoded_bytes = base64.urlsafe_b64decode(payload)
-                    decoded_json = json.loads(decoded_bytes)
-                    user_id = decoded_json.get('partnerID', 'unknown')
-                    logging.info(f"🔑 Extracted UUID: {user_id}")
-                else:
-                    raise Exception("Invalid token format")
-            except Exception as e:
-                # Fallback to access_key prefix
-                access_key = credentials['access_key']
-                user_id = access_key.split('_')[0] if '_' in access_key else access_key[:8]
-                logging.warning(f"⚠️  Could not extract UUID ({str(e)}), using: {user_id}")
-            
-            mm_instance.user_id = user_id
-            mm_instance.account_num = account_num  # Store account number for token refresh
-            mm_instances[user_id] = mm_instance
-            logging.info(f"✅ Loaded account {account_num}: {user_id} (Balance: ${mm_instance.balance:.2f})")
-            
-        except Exception as e:
-            logging.warning(f"⚠️  Could not load account {account_num}: {str(e)}")
-            continue
-    
-    return mm_instances
+# ============================================================================
+# Account loading
+# ============================================================================
+def load_mm_account(account_num, environment='sandbox'):
+    """Load a single MM account"""
+    credentials = config.get_account_credentials(account_num, environment)
 
-
-def refresh_account_token(mm_instance, user_id, account_num, environment):
-    """Refresh authentication token for an account"""
-    try:
-        logging.info(f"🔄 Refreshing token for account {account_num} ({user_id[:8]}...)")
-        mm_instance.mm_login()
-        logging.info(f"✅ Token refreshed for account {account_num}")
-        return True
-    except Exception as e:
-        logging.error(f"❌ Failed to refresh token for account {account_num}: {str(e)}")
-        return False
-
-
-def place_wager_with_tracking(mm_instance, user_id, line_id, odds, wager_num, show_detailed_logs=False, 
-                              account_num=None, environment='sandbox'):
-    """Place a single wager and track metrics with automatic token refresh on 401"""
-    import requests
-    from urllib.parse import urljoin
-    import uuid
-    
-    external_id = str(uuid.uuid1())
-    body = {
-        'external_id': external_id,
-        'line_id': line_id,
-        'odds': odds,
-        'stake': 2.0
+    mm_instance = mm_calls.MMInteractions()
+    mm_instance.mm_keys = {
+        'access_key': credentials['access_key'],
+        'secret_key': credentials['secret_key']
     }
-    
-    max_retries = 2
-    retry_count = 0
-    
-    while retry_count < max_retries:
-        try:
-            # Log when request starts (to prove parallelism)
-            if show_detailed_logs:
-                logging.info(f"🚀 [{time.strftime('%H:%M:%S.%f')[:-3]}] User {user_id[:8]} - Wager #{wager_num:03d} STARTING")
-            
-            request_start = time.time()
-            play_url = urljoin(mm_instance.base_url, config.URL['mm_place_wager'])
-            response = requests.post(play_url, json=body, headers=mm_instance._MMInteractions__get_auth_header())
-            response_time = time.time() - request_start
-            
-            with metrics_lock:
-                user_metrics[user_id]['response_times'].append(response_time)
-                user_metrics[user_id]['timestamps'].append(time.time())
-            
-            if response.status_code == 200:
-                response_data = response.json()
-                wager_data = response_data.get('data', {})
-                if 'wager' in wager_data and 'id' in wager_data['wager']:
-                    wager_id = wager_data['wager']['id']
-                    wager_status = wager_data['wager'].get('status', 'unknown')
-                    
-                    with metrics_lock:
-                        user_metrics[user_id]['placed'] += 1
-                        if wager_status == 'matched':
-                            user_metrics[user_id]['matched'] += 1
-                    
-                    # Log successful completion (to prove parallelism)
-                    if show_detailed_logs:
-                        logging.info(f"✅ [{time.strftime('%H:%M:%S.%f')[:-3]}] User {user_id[:8]} - Wager #{wager_num:03d} COMPLETED ({response_time*1000:.0f}ms)")
-                    
-                    return {
-                        'user_id': user_id,
-                        'wager_id': wager_id,
-                        'external_id': external_id,
-                        'status': wager_status,
-                        'response_time': response_time,
-                        'wager_num': wager_num
-                    }
-            elif response.status_code == 401:
-                # Token expired - refresh and retry
-                retry_count += 1
-                if retry_count < max_retries and account_num:
-                    logging.warning(f"⚠️  Token expired for {user_id[:8]}, refreshing... (attempt {retry_count}/{max_retries})")
-                    if refresh_account_token(mm_instance, user_id, account_num, environment):
-                        continue  # Retry the request
-                    else:
-                        break  # Failed to refresh, exit retry loop
-                else:
-                    break  # No more retries or no account_num provided
-            else:
-                with metrics_lock:
-                    user_metrics[user_id]['failed'] += 1
-                
-                # Get error details
-                try:
-                    error_body = response.json()
-                    error_msg = error_body.get('message', 'No error message')
-                    error_code = error_body.get('code', 'No code')
-                except:
-                    error_msg = response.text[:200] if response.text else 'No response body'
-                    error_code = 'N/A'
-                
-                # Log first few failures for this user in detail
-                if user_metrics[user_id]['failed'] <= 3:
-                    logging.error(f"❌ User {user_id} wager {wager_num} failed:")
-                    logging.error(f"   HTTP Status: {response.status_code}")
-                    logging.error(f"   Error Code: {error_code}")
-                    logging.error(f"   Error Message: {error_msg}")
-                    logging.error(f"   Line ID: {line_id}")
-                    logging.error(f"   Odds: {odds}")
-                break  # Exit retry loop for non-401 errors
-                
-        except Exception as e:
-            retry_count += 1
-            if retry_count >= max_retries:
-                with metrics_lock:
-                    user_metrics[user_id]['failed'] += 1
-                logging.error(f"User {user_id} wager {wager_num} error: {str(e)}")
-                break
-            time.sleep(0.1)  # Brief delay before retry
-    
-    return None
+
+    mm_instance.mm_login()
+    mm_instance.get_balance()
+    mm_instance.seeding()
+
+    # Extract partner UUID from JWT
+    user_id = _extract_user_id(mm_instance)
+    mm_instance.user_id = user_id
+    mm_instance.account_num = account_num
+
+    return mm_instance, user_id
 
 
-def send_concurrent_wagers(mm_instances, markets, total_wagers, rate_limit=50, show_detailed_logs=False, max_workers=50):
+def load_patron_account(patron_num, environment='sandbox'):
+    """Load a patron account by number
+
+    Patron accounts use email/password web auth, not API keys.
+    - patron_num=4 → user_info_patron_{env}.json  (deduce, usr004)
+    - patron_num=8 → user_info_patron8_{env}.json  (non-deduce, usr008)
     """
-    Send wagers from multiple users CONCURRENTLY - STRESS TEST MODE
-    
-    This simulates real load where multiple users submit at same time.
-    The BACKEND should handle batching and fairness.
-    
-    For high volume tests, we throttle to avoid API rate limiting.
-    
-    :param markets: List of market dicts (can be single line_id for backward compat, or list of markets)
-    :param rate_limit: Maximum wagers per second (default: 50)
-    :param show_detailed_logs: Show detailed per-wager logs to prove parallelism
-    :param max_workers: Maximum concurrent threads (default: 50)
-    """
-    user_ids = list(mm_instances.keys())
-    wagers_per_user = total_wagers // len(user_ids)
-    
-    logging.info(f"\n🚀 STRESS TEST: Sending {total_wagers:,} concurrent wagers from {len(user_ids)} users")
-    logging.info(f"   Each user will send {wagers_per_user:,} wagers")
-    logging.info(f"   Backend should batch and parallelize these")
-    logging.info(f"   Rate limit: {rate_limit} wagers/sec (to avoid API throttling)")
-    logging.info(f"   Max concurrent workers: {max_workers}\n")
-    
-    all_wagers = []
-    start_time = time.time()
-    last_progress_time = start_time
-    completed_count = 0
-    submitted_count = 0
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = []
-        
-        # Submit all wagers for all users in INTERLEAVED fashion
-        # This ensures parallel execution across users
-        # Rotate through different markets to spread load
-        if show_detailed_logs:
-            logging.info("\n📋 SUBMITTING WAGERS IN PARALLEL (interleaved by user)\n")
-        
-        wager_counter = 0
-        for wager_num in range(1, wagers_per_user + 1):
-            for user_id in user_ids:
-                mm_instance = mm_instances[user_id]
-                odds = mm_instance._MMInteractions__get_random_odds()
-                
-                # Rotate through available markets
-                market = markets[wager_counter % len(markets)]
-                line_id = market['line_id'] if isinstance(market, dict) else market
-                
-                future = executor.submit(
-                    place_wager_with_tracking,
-                    mm_instance,
-                    user_id,
-                    line_id,
-                    odds,
-                    wager_num,
-                    show_detailed_logs,
-                    mm_instance.account_num,
-                    'sandbox'  # Pass environment
-                )
-                futures.append(future)
-                wager_counter += 1
-        
-        # Collect results with progress reporting
-        for future in as_completed(futures):
-            try:
-                result = future.result()
-                if result:
-                    all_wagers.append(result)
-                    completed_count += 1
-                    
-                    # Progress report every 5 seconds
-                    current_time = time.time()
-                    if current_time - last_progress_time >= 5:
-                        elapsed_so_far = current_time - start_time
-                        rate = completed_count / elapsed_so_far if elapsed_so_far > 0 else 0
-                        pct = (completed_count / total_wagers) * 100
-                        eta = (total_wagers - completed_count) / rate if rate > 0 else 0
-                        
-                        # Check per-user fairness so far
-                        with metrics_lock:
-                            user_placed = {uid: user_metrics[uid]['placed'] for uid in user_ids}
-                            placed_list = list(user_placed.values())
-                            current_fairness = min(placed_list) / max(placed_list) if max(placed_list) > 0 else 0
-                        
-                        logging.info(f"📊 Progress: {completed_count:,}/{total_wagers:,} ({pct:.1f}%) | "
-                                   f"Rate: {rate:.1f}/s | "
-                                   f"Fairness: {current_fairness:.1%} | "
-                                   f"ETA: {eta/60:.1f}m")
-                        last_progress_time = current_time
-                        
-            except Exception as e:
-                logging.error(f"Future error: {str(e)}")
-    
-    elapsed = time.time() - start_time
-    
-    return all_wagers, elapsed
+    script_dir = os.path.dirname(os.path.abspath(__file__))
 
-
-def analyze_fairness(mm_instances):
-    """Analyze the fairness of wager distribution"""
-    user_ids = list(mm_instances.keys())
-    
-    logging.info("\n" + "="*70)
-    logging.info("BACKEND FAIRNESS ANALYSIS")
-    logging.info("="*70)
-    
-    # Calculate metrics per user
-    placed_counts = []
-    for user_id in user_ids:
-        with metrics_lock:
-            metrics = user_metrics[user_id]
-            placed = metrics['placed']
-            matched = metrics['matched']
-            failed = metrics['failed']
-            response_times = metrics['response_times']
-            timestamps = metrics['timestamps']
-        
-        placed_counts.append(placed)
-        avg_rt = sum(response_times) / len(response_times) if response_times else 0
-        
-        logging.info(f"\n👤 User {user_id}:")
-        logging.info(f"   Placed: {placed}")
-        logging.info(f"   Matched: {matched}")
-        logging.info(f"   Failed: {failed}")
-        logging.info(f"   Avg Response Time: {avg_rt*1000:.0f}ms")
-        logging.info(f"   Total Requests: {len(response_times)}")
-    
-    # Calculate fairness ratio
-    if placed_counts:
-        max_placed = max(placed_counts)
-        min_placed = min(placed_counts)
-        fairness_ratio = min_placed / max_placed if max_placed > 0 else 0
-        
-        logging.info(f"\n⚖️  FAIRNESS RATIO: {fairness_ratio:.2%}")
-        logging.info(f"   Min placed: {min_placed}")
-        logging.info(f"   Max placed: {max_placed}")
-        
-        if fairness_ratio >= 0.90:
-            logging.info("   ✅ PASS: Backend maintains fairness (≥90%)")
-        elif fairness_ratio >= 0.85:
-            logging.info("   ⚠️  WARNING: Fairness acceptable but not ideal (85-90%)")
-        else:
-            logging.info("   ❌ FAIL: Backend not maintaining fairness (<85%)")
-    
-    logging.info("="*70 + "\n")
-
-
-def run_backend_fairness_test(event_name, total_wagers=200, environment='sandbox', verbose=False, max_workers=50, deduce_mode=False):
-    """Run the backend fairness test
-    
-    Args:
-        event_name: Event ID or name to test
-        total_wagers: Total number of wagers to place
-        environment: 'sandbox' or 'staging'
-        verbose: Enable detailed per-wager logging
-        max_workers: Maximum concurrent workers
-        deduce_mode: If True, include MM1 (deduce-enabled). If False, use only non-deduce accounts (MM2-3)
-    """
-    import time as time_module
-    test_start_time = time.time()
-    
-    logging.info("="*70)
-    logging.info("BACKEND FAIRNESS ENHANCEMENT TEST")
-    logging.info("="*70)
-    logging.info(f"Environment: {environment}")
-    logging.info(f"Target event: {event_name}")
-    logging.info(f"Total wagers: {total_wagers}")
-    logging.info(f"Deduce mode: {'ENABLED (includes MM1)' if deduce_mode else 'DISABLED (non-deduce only)'}")
-    logging.info("="*70 + "\n")
-    
-    # Load MM accounts based on deduce mode
-    if deduce_mode:
-        logging.info("📦 Loading MM accounts 1-2 (MM1 deduce-enabled, MM2 non-deduce)...")
-        mm_instances = load_mm_accounts(environment, num_accounts=2, start_account=1)
+    if patron_num == 4:
+        # Patron4 uses the existing patron config
+        config_file = f'user_info_patron_{environment}.json'
     else:
-        logging.info("📦 Loading MM accounts 2-3 (MM2 and MM3, non-deduce only)...")
-        mm_instances = load_mm_accounts(environment, num_accounts=2, start_account=2)
-    
-    if len(mm_instances) < 2:
-        logging.error("❌ Need at least 2 MM accounts for fairness testing")
-        return
-    
-    logging.info(f"✅ Loaded {len(mm_instances)} accounts")
-    
-    # Store initial balances
-    initial_balances = {}
-    for user_id, mm_inst in mm_instances.items():
-        initial_balances[user_id] = mm_inst.balance
-    
-    # Validate accounts
-    logging.info("\n🔍 Initial Account Balances:")
-    for user_id, mm_inst in mm_instances.items():
-        logging.info(f"   User {user_id}: ${mm_inst.balance:,.2f}")
-        if mm_inst.balance < 100:
-            logging.warning(f"   ⚠️  Low balance for {user_id}!")
-    logging.info("")
-    
-    # Collect markets from multiple events
-    mm_instance = list(mm_instances.values())[0]
-    available_markets = []
-    
-    # If event_name is provided, find matching events
-    if event_name:
-        matching_events = mm_instance.find_event_by_id_or_name(event_name)
-        if not matching_events:
-            logging.error(f"❌ No events found matching '{event_name}'")
-            logging.info(f"\nℹ️  Available events:")
-            for evt_id, evt_data in list(mm_instance.sport_events.items())[:10]:
-                logging.info(f"   ID: {evt_id} | Name: {evt_data.get('name', 'Unknown')}")
+        config_file = f'user_info_patron{patron_num}_{environment}.json'
+
+    config_path = os.path.join(script_dir, 'src', config_file)
+    with open(config_path) as f:
+        patron_config = json.load(f)
+
+    base_url = config.ENVIRONMENT_URLS.get(environment, config.ENVIRONMENT_URLS['sandbox'])
+
+    # Login
+    login_url = urljoin(base_url, 'api/v1/auth/login')
+    device_id = str(uuid.uuid1())
+    headers = {
+        '__source': 'web',
+        'accept': 'application/json, text/plain, */*',
+        'content-type': 'application/json',
+        'origin': base_url.replace('api-', ''),
+        'x-currency': 'cash'
+    }
+    request_body = {
+        'email': patron_config['email'],
+        'password': patron_config['password'],
+        'device_id': device_id
+    }
+
+    response = requests.post(login_url, headers=headers, json=request_body)
+    if response.status_code != 200:
+        raise Exception(f"Patron{patron_num} login failed: {response.status_code} - {response.text}")
+
+    jwt_token = response.json().get('accessToken')
+    if not jwt_token:
+        raise Exception(f"Patron{patron_num} no access token received")
+
+    # Get balance
+    balance_url = urljoin(base_url, 'api/v1/wallet')
+    auth_headers = {
+        'Authorization': f'Bearer {jwt_token}',
+        'Content-Type': 'application/json',
+        'x-currency': 'cash',
+        'accept': 'application/json'
+    }
+    balance_resp = requests.get(balance_url, headers=auth_headers)
+    balance = 0
+    if balance_resp.status_code == 200:
+        balance = balance_resp.json().get('data', {}).get('balance', 0)
+
+    patron_info = {
+        'patron_num': patron_num,
+        'email': patron_config['email'],
+        'jwt': jwt_token,
+        'base_url': base_url,
+        'balance': balance,
+        'environment': environment,
+        'device_id': device_id,
+        'password': patron_config['password'],
+    }
+    logging.info(f"  Patron{patron_num}: {patron_config['email']} (Balance: ${balance:,.2f})")
+    return patron_info
+
+
+def _extract_user_id(mm_instance):
+    """Extract partner UUID from JWT token"""
+    access_token = mm_instance.mm_session.get('access_token', '')
+    try:
+        parts = access_token.split('.')
+        if len(parts) >= 2:
+            payload = parts[1]
+            padding = 4 - (len(payload) % 4)
+            if padding != 4:
+                payload += '=' * padding
+            decoded = json.loads(base64.urlsafe_b64decode(payload))
+            return decoded.get('partnerID', 'unknown')
+    except Exception:
+        pass
+    return mm_instance.mm_keys.get('access_key', 'unknown')[:8]
+
+
+def _refresh_patron_token(patron_info):
+    """Refresh patron JWT token"""
+    try:
+        login_url = urljoin(patron_info['base_url'], 'api/v1/auth/login')
+        headers = {
+            '__source': 'web',
+            'accept': 'application/json, text/plain, */*',
+            'content-type': 'application/json',
+            'origin': patron_info['base_url'].replace('api-', ''),
+            'x-currency': 'cash'
+        }
+        request_body = {
+            'email': patron_info['email'],
+            'password': patron_info['password'],
+            'device_id': patron_info['device_id']
+        }
+        response = requests.post(login_url, headers=headers, json=request_body)
+        if response.status_code == 200:
+            patron_info['jwt'] = response.json().get('accessToken')
+            logging.info(f"  Patron{patron_info['patron_num']} token refreshed")
+            return True
+    except Exception as e:
+        logging.error(f"  Patron{patron_info['patron_num']} token refresh failed: {e}")
+    return False
+
+
+# ============================================================================
+# Rate limiter
+# ============================================================================
+class RateLimiter:
+    """Thread-safe token-bucket rate limiter for wager RPS control"""
+    def __init__(self, max_wagers_per_sec):
+        self.min_interval = 1.0 / max_wagers_per_sec if max_wagers_per_sec > 0 else 0
+        self.lock = threading.Lock()
+        self.tokens = 0
+        self.last_refill = time.time()
+        self.max_wagers_per_sec = max_wagers_per_sec
+
+    def acquire(self, num_wagers=1):
+        """Block until we have capacity for num_wagers"""
+        if self.max_wagers_per_sec <= 0:
             return
-        events_to_use = matching_events[:5]  # Use up to 5 matching events
+        sleep_time = num_wagers * self.min_interval
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_refill
+            # Simple: ensure minimum spacing between bursts
+            if elapsed < sleep_time:
+                wait = sleep_time - elapsed
+                time.sleep(wait)
+            self.last_refill = time.time()
+
+
+# ============================================================================
+# MM Place & Cancel cycle (the race condition producer)
+# ============================================================================
+def _build_batch_wagers(mm_instance, markets, batch_size, random_stake_range):
+    """Build a batch of wagers with random odds & stakes"""
+    batch = []
+    for i in range(batch_size):
+        market = markets[i % len(markets)]
+        line_id = market['line_id'] if isinstance(market, dict) else market
+        odds = mm_instance._MMInteractions__get_random_odds()
+        stake = round(random.uniform(*random_stake_range), 2)
+        batch.append({
+            'external_id': str(uuid.uuid1()),
+            'line_id': line_id,
+            'odds': odds,
+            'stake': stake,
+        })
+    return batch
+
+
+def _send_batch_place(mm_instance, user_id, batch_wagers, verbose=False):
+    """Send batch place and return placed wagers list"""
+    batch_play_url = urljoin(mm_instance.base_url, config.URL['mm_batch_place'])
+    place_start = time.time()
+    try:
+        place_resp = requests.post(batch_play_url, json={"data": batch_wagers},
+                                   headers=mm_instance._MMInteractions__get_auth_header())
+    except Exception as e:
+        logging.error(f"  MM {user_id[:8]} place exception: {e}")
+        with race_lock:
+            race_metrics['total_bets_place_failed'] += len(batch_wagers)
+        return [], time.time() - place_start
+
+    place_elapsed = time.time() - place_start
+    placed = []
+    if place_resp.status_code == 200:
+        try:
+            for w in place_resp.json().get('data', {}).get('succeed_wagers', []):
+                placed.append({'external_id': w['external_id'], 'wager_id': w['id']})
+                mm_instance.wagers[w['external_id']] = w['id']
+        except Exception as e:
+            logging.error(f"  MM {user_id[:8]} place parse error: {e}")
+    elif verbose:
+        logging.warning(f"  MM {user_id[:8]} place failed: {place_resp.status_code} - {place_resp.text[:200]}")
+
+    num_placed = len(placed)
+    with race_lock:
+        race_metrics['total_bets_placed'] += num_placed
+        race_metrics['total_bets_place_failed'] += (len(batch_wagers) - num_placed)
+        user_metrics[user_id]['placed'] += num_placed
+        user_metrics[user_id]['response_times_place'].append(place_elapsed)
+
+    return placed, place_elapsed
+
+
+def _classify_cancel_error(error_code, error_text):
+    """Classify a cancel error into a known category and return the metric key."""
+    error_lower = error_text.lower()
+    if error_code == 404:
+        return 'cancel_fail_not_found'
+    elif 'already cancelled' in error_lower or 'already canceled' in error_lower:
+        return 'cancel_fail_already_cancelled'
+    elif 'already_matched' in error_lower or 'already matched' in error_lower or 'matched' in error_lower:
+        return 'cancel_fail_already_matched'
+    elif error_code == 409 or 'placing' in error_lower or 'placing play' in error_lower:
+        return 'cancel_fail_placing'
+    elif ('processing' in error_lower or 'pending' in error_lower
+          or error_code == 422 or error_code == 500):
+        return 'cancel_fail_still_processing'
     else:
-        # Use all available events
-        events_to_use = list(mm_instance.sport_events.values())[:10]  # Use up to 10 events
-    
-    # Collect markets from all events
-    for event in events_to_use:
+        return 'cancel_fail_other'
+
+
+def _send_batch_cancel(mm_instance, user_id, placed_wagers, place_end_time, verbose=False):
+    """
+    Send cancel_multiple_wagers with the SAME wager IDs returned from place response.
+    This replicates the production pattern (SSE-1767/SSE-1858).
+
+    :param placed_wagers: list of {'external_id': ..., 'wager_id': ...} from place response
+    :param place_end_time: timestamp when place response was received
+    """
+    if not placed_wagers:
+        return
+
+    batch_cancel_url = urljoin(mm_instance.base_url, config.URL['mm_batch_cancel'])
+    batch_cancel_body = [{
+        'wager_id': w['wager_id'],
+        'external_id': w['external_id']
+    } for w in placed_wagers]
+
+    cancel_start = time.time()
+    actual_gap = cancel_start - place_end_time  # Gap from place RESPONSE to cancel REQUEST
+
+    try:
+        cancel_resp = requests.post(batch_cancel_url, json={'data': batch_cancel_body},
+                                    headers=mm_instance._MMInteractions__get_auth_header())
+    except Exception as e:
+        logging.error(f"  MM {user_id[:8]} batch_cancel exception: {e}")
+        with race_lock:
+            race_metrics['batch_cancel_failed'] += 1
+            race_metrics['cancel_fail_other'] += len(placed_wagers)
+        return
+
+    cancel_elapsed = time.time() - cancel_start
+
+    with race_lock:
+        race_metrics['batch_cancel_sent'] += 1
+        race_metrics['race_condition_gaps'].append(actual_gap)
+        user_metrics[user_id]['response_times_cancel'].append(cancel_elapsed)
+
+    if cancel_resp.status_code == 200:
+        # Parse per-wager results from batch cancel response
+        try:
+            resp_data = cancel_resp.json().get('data', [])
+            per_ok = 0
+            per_fail = 0
+            for item in resp_data:
+                if item.get('success'):
+                    per_ok += 1
+                else:
+                    per_fail += 1
+                    err = item.get('error', {})
+                    err_msg = err.get('message', '') if isinstance(err, dict) else str(err)
+                    err_code = err.get('error_code', 0) if isinstance(err, dict) else 0
+                    status_code = item.get('statusCode', 0)
+                    category = _classify_cancel_error(status_code, err_msg)
+                    with race_lock:
+                        race_metrics[category] += 1
+                        race_metrics['cancel_error_details'].append({
+                            'timestamp': datetime.now().isoformat(),
+                            'cancel_type': 'batch',
+                            'mm_user': user_id[:8],
+                            'status_code': status_code,
+                            'error': err_msg[:200],
+                            'gap_ms': actual_gap * 1000,
+                        })
+            with race_lock:
+                race_metrics['batch_cancel_succeeded'] += 1
+                race_metrics['batch_cancel_per_wager_ok'] += per_ok
+                race_metrics['batch_cancel_per_wager_fail'] += per_fail
+                user_metrics[user_id]['cancelled'] += per_ok
+                user_metrics[user_id]['cancel_failed'] += per_fail
+
+            # Clean up wagers dict
+            for w in placed_wagers:
+                mm_instance.wagers.pop(w['external_id'], None)
+
+            if verbose:
+                logging.info(f"  MM {user_id[:8]} batch_cancel OK {per_ok}/{len(placed_wagers)} "
+                             f"({cancel_elapsed*1000:.0f}ms, gap={actual_gap*1000:.1f}ms)"
+                             f"{f' [{per_fail} failed]' if per_fail else ''}")
+        except Exception as e:
+            logging.error(f"  MM {user_id[:8]} batch_cancel parse error: {e}")
+            with race_lock:
+                race_metrics['batch_cancel_succeeded'] += 1
+                race_metrics['batch_cancel_per_wager_ok'] += len(placed_wagers)
+                user_metrics[user_id]['cancelled'] += len(placed_wagers)
+            mm_instance.wagers.clear()
+    else:
+        error_text = ''
+        try:
+            error_text = json.dumps(cancel_resp.json())
+        except Exception:
+            error_text = cancel_resp.text[:300]
+
+        category = _classify_cancel_error(cancel_resp.status_code, error_text)
+        with race_lock:
+            race_metrics['batch_cancel_failed'] += 1
+            race_metrics[category] += len(placed_wagers)
+            user_metrics[user_id]['cancel_failed'] += len(placed_wagers)
+            race_metrics['cancel_error_details'].append({
+                'timestamp': datetime.now().isoformat(),
+                'cancel_type': 'batch',
+                'mm_user': user_id[:8],
+                'status_code': cancel_resp.status_code,
+                'error': error_text[:200],
+                'gap_ms': actual_gap * 1000,
+                'num_wagers': len(placed_wagers),
+            })
+
+        if verbose:
+            logging.warning(f"  MM {user_id[:8]} BATCH_CANCEL FAILED [{cancel_resp.status_code}] "
+                            f"({cancel_elapsed*1000:.0f}ms, gap={actual_gap*1000:.1f}ms): {error_text[:120]}")
+
+
+def _send_cancel_all(mm_instance, user_id, place_fire_time, verbose=False):
+    """
+    Fire cancel_all_wagers as a periodic sweep.
+    This doesn't need wager_ids — it cancels everything open for this user.
+    """
+    cancel_all_url = urljoin(mm_instance.base_url, config.URL['mm_cancel_all_wagers'])
+
+    cancel_start = time.time()
+    try:
+        cancel_resp = requests.post(cancel_all_url, json={},
+                                    headers=mm_instance._MMInteractions__get_auth_header())
+    except Exception as e:
+        logging.error(f"  MM {user_id[:8]} cancel_all exception: {e}")
+        with race_lock:
+            race_metrics['cancel_all_failed'] += 1
+            race_metrics['cancel_fail_other'] += 1
+        return
+
+    cancel_elapsed = time.time() - cancel_start
+    actual_gap = cancel_start - place_fire_time
+
+    with race_lock:
+        race_metrics['cancel_all_sent'] += 1
+        race_metrics['race_condition_gaps'].append(actual_gap)
+        user_metrics[user_id]['response_times_cancel'].append(cancel_elapsed)
+
+    if cancel_resp.status_code == 200:
+        with race_lock:
+            race_metrics['cancel_all_succeeded'] += 1
+            user_metrics[user_id]['cancelled'] += len(mm_instance.wagers)
+        mm_instance.wagers.clear()
+        if verbose:
+            logging.info(f"  MM {user_id[:8]} cancel_all OK ({cancel_elapsed*1000:.0f}ms, gap={actual_gap*1000:.1f}ms)")
+    else:
+        error_text = ''
+        try:
+            error_text = json.dumps(cancel_resp.json())
+        except Exception:
+            error_text = cancel_resp.text[:300]
+
+        category = _classify_cancel_error(cancel_resp.status_code, error_text)
+        with race_lock:
+            race_metrics['cancel_all_failed'] += 1
+            race_metrics[category] += 1
+            user_metrics[user_id]['cancel_failed'] += 1
+            race_metrics['cancel_error_details'].append({
+                'timestamp': datetime.now().isoformat(),
+                'cancel_type': 'cancel_all',
+                'mm_user': user_id[:8],
+                'status_code': cancel_resp.status_code,
+                'error': error_text[:200],
+                'gap_ms': actual_gap * 1000,
+            })
+
+        if verbose:
+            logging.warning(f"  MM {user_id[:8]} CANCEL_ALL FAILED [{cancel_resp.status_code}] "
+                            f"({cancel_elapsed*1000:.0f}ms, gap={actual_gap*1000:.1f}ms): {error_text[:120]}")
+
+
+def _run_race_cycle(mm_instance, user_id, markets, batch_size, cancel_gap,
+                    random_stake_range, rate_limiter, cycle_num=0,
+                    cancel_all_interval=0, verbose=False, overlap_mode=False):
+    """
+    Single race condition cycle.
+
+    Primary strategy (cancel_multiple_wagers):
+      t=0ms       → fire batch place request
+      t=Xms       → place response arrives with wager IDs
+      t=X+gap ms  → fire cancel_multiple_wagers with SAME wager IDs
+
+    Periodic sweep (cancel_all_wagers, every N cycles):
+      t=0ms       → fire batch place in background
+      t=gap ms    → fire cancel_all_wagers (no IDs needed, while place is in-flight)
+
+    Overlap mode (--overlap): Designed to trigger database deadlocks.
+      t=0ms       → fire batch place + cancel_all SIMULTANEOUSLY
+      t=Xms       → place response arrives → immediately fire batch_cancel (double-tap)
+      Every cycle uses cancel_all, not just every Nth.
+    """
+    # Rate limit
+    if rate_limiter:
+        rate_limiter.acquire(batch_size)
+
+    batch_wagers = _build_batch_wagers(mm_instance, markets, batch_size, random_stake_range)
+
+    if overlap_mode:
+        # === OVERLAP MODE: fire place + cancel_all simultaneously, then batch_cancel ===
+        place_result = [None, 0]
+        place_fire_time = time.time()
+
+        def _do_place():
+            placed, elapsed = _send_batch_place(mm_instance, user_id, batch_wagers, verbose)
+            place_result[0] = placed
+            place_result[1] = elapsed
+
+        def _do_cancel_all():
+            _send_cancel_all(mm_instance, user_id, place_fire_time, verbose)
+
+        # Fire BOTH at the exact same instant
+        place_thread = threading.Thread(target=_do_place, daemon=True)
+        cancel_thread = threading.Thread(target=_do_cancel_all, daemon=True)
+        place_thread.start()
+        cancel_thread.start()
+
+        # Wait for both to complete
+        place_thread.join()
+        cancel_thread.join()
+        new_placed = place_result[0] or []
+
+        # Double-tap: also batch_cancel the specific wager IDs (server may deadlock on this)
+        if new_placed:
+            place_end_time = time.time()
+            _send_batch_cancel(mm_instance, user_id, new_placed, place_end_time, verbose)
+
+    else:
+        use_cancel_all = cancel_all_interval > 0 and cycle_num > 0 and cycle_num % cancel_all_interval == 0
+
+        if use_cancel_all:
+            # === cancel_all strategy: fire place in background, cancel_all after gap ===
+            place_result = [None, 0]
+            place_fire_time = time.time()
+
+            def _do_place():
+                placed, elapsed = _send_batch_place(mm_instance, user_id, batch_wagers, verbose)
+                place_result[0] = placed
+                place_result[1] = elapsed
+
+            place_thread = threading.Thread(target=_do_place, daemon=True)
+            place_thread.start()
+
+            time.sleep(cancel_gap)
+            _send_cancel_all(mm_instance, user_id, place_fire_time, verbose)
+
+            place_thread.join()
+            new_placed = place_result[0] or []
+        else:
+            # === batch cancel strategy: place → get IDs → immediately cancel same IDs ===
+            place_fire_time = time.time()
+            new_placed, place_elapsed = _send_batch_place(mm_instance, user_id, batch_wagers, verbose)
+            place_end_time = time.time()
+
+            if new_placed:
+                # Optional tiny gap before cancel (simulates network/processing delay)
+                if cancel_gap > 0:
+                    time.sleep(cancel_gap)
+                _send_batch_cancel(mm_instance, user_id, new_placed, place_end_time, verbose)
+
+    # Push newly placed wagers to patron queue (some may have been cancelled already)
+    if new_placed:
+        with patron_queue_lock:
+            for w_req, w_resp in zip(batch_wagers, new_placed):
+                patron_bet_queue.append({
+                    'line_id': w_req['line_id'],
+                    'odds': w_req['odds'],
+                    'stake': w_req['stake'],
+                    'wager_id': w_resp['wager_id'],
+                    'external_id': w_resp['external_id'],
+                    'mm_user_id': user_id,
+                    'timestamp': time.time(),
+                })
+        if verbose:
+            if overlap_mode:
+                cancel_type = "overlap"
+                elapsed_ms = place_result[1] * 1000
+            elif use_cancel_all:
+                cancel_type = "cancel_all"
+                elapsed_ms = place_result[1] * 1000
+            else:
+                cancel_type = "batch_cancel"
+                elapsed_ms = place_elapsed * 1000
+            logging.info(f"  MM {user_id[:8]} [{cancel_type}] placed {len(new_placed)}/{batch_size} ({elapsed_ms:.0f}ms)")
+
+    with race_lock:
+        race_metrics['total_cycles'] += 1
+
+    return new_placed
+
+
+def mm_worker(mm_instance, user_id, markets, cycles, batch_size, cancel_gap,
+              random_stake_range, max_workers=1, rate_limiter=None,
+              cancel_all_interval=0, verbose=False, overlap_mode=False):
+    """
+    MM worker: runs race condition cycles with dual cancel strategy.
+
+    Primary: place → get wager IDs → immediately cancel_multiple_wagers (same IDs)
+    Every cancel_all_interval cycles: place in background → cancel_all_wagers after gap
+    Overlap: place + cancel_all simultaneously every cycle (deadlock hunter)
+
+    When max_workers > 1, multiple independent pipelines run concurrently.
+    """
+    def _run_pipeline(pipeline_cycles, start_cycle=0):
+        for i in range(pipeline_cycles):
+            cycle_num = start_cycle + i + 1
+            try:
+                _run_race_cycle(
+                    mm_instance, user_id, markets, batch_size, cancel_gap,
+                    random_stake_range, rate_limiter, cycle_num,
+                    cancel_all_interval, verbose, overlap_mode
+                )
+            except Exception as e:
+                logging.error(f"  MM {user_id[:8]} cycle {cycle_num} error: {e}")
+            if not overlap_mode:
+                time.sleep(random.uniform(0.005, 0.02))
+
+    if max_workers <= 1:
+        _run_pipeline(cycles)
+    else:
+        cycles_per_worker = max(1, cycles // max_workers)
+        remainder = cycles - (cycles_per_worker * max_workers)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            offset = 0
+            for i in range(max_workers):
+                c = cycles_per_worker + (1 if i < remainder else 0)
+                if c > 0:
+                    futures.append(executor.submit(_run_pipeline, c, offset))
+                    offset += c
+            for f in as_completed(futures):
+                try:
+                    f.result()
+                except Exception as e:
+                    logging.error(f"  MM {user_id[:8]} worker exception: {e}")
+
+
+# ============================================================================
+# Patron matching worker (the race condition consumer)
+# ============================================================================
+def patron_place_bet(patron_info, line_id, odds, stake):
+    """Place a single patron bet against an MM wager"""
+    bet_url = urljoin(patron_info['base_url'], 'trade/private/api/v2/wagers')
+
+    # Negate odds for the opposite side
+    opposite_odds = -odds
+
+    bet_body = {
+        'lineID': line_id,
+        'odds': opposite_odds,
+        'stake': stake,
+    }
+
+    headers = {
+        'Authorization': f'Bearer {patron_info["jwt"]}',
+        'Content-Type': 'application/json',
+        'x-currency': 'cash',
+        'accept': 'application/json',
+        '__source': 'web',
+        'origin': patron_info['base_url'].replace('api-', ''),
+    }
+
+    try:
+        resp = requests.post(bet_url, json=bet_body, headers=headers)
+        if resp.status_code == 401:
+            # Token expired, refresh and retry once
+            if _refresh_patron_token(patron_info):
+                headers['Authorization'] = f'Bearer {patron_info["jwt"]}'
+                resp = requests.post(bet_url, json=bet_body, headers=headers)
+            else:
+                return False, resp.status_code, "Token refresh failed"
+
+        if resp.status_code in (200, 201):
+            return True, resp.status_code, "OK"
+        else:
+            error_msg = resp.text[:200]
+            return False, resp.status_code, error_msg
+    except Exception as e:
+        return False, 0, str(e)
+
+
+def patron_worker(patron_info, stop_event, verbose=False):
+    """
+    Patron worker thread: continuously drains the bet queue and places counter-bets.
+    Races against MM cancel to try to get matched.
+    """
+    patron_label = f"Patron{patron_info['patron_num']}"
+
+    while not stop_event.is_set():
+        bet = None
+        with patron_queue_lock:
+            if patron_bet_queue:
+                bet = patron_bet_queue.pop(0)
+
+        if bet is None:
+            time.sleep(0.005)  # Tight poll - patrons need to be fast
+            continue
+
+        with race_lock:
+            race_metrics['patron_bets_attempted'] += 1
+
+        success, status_code, msg = patron_place_bet(
+            patron_info, bet['line_id'], bet['odds'], bet['stake']
+        )
+
+        if success:
+            with race_lock:
+                race_metrics['patron_bets_succeeded'] += 1
+                user_metrics[bet['mm_user_id']]['matched_by_patron'] += 1
+            if verbose:
+                logging.info(f"  {patron_label} MATCHED line={bet['line_id'][:12]}... odds={bet['odds']} stake=${bet['stake']}")
+        else:
+            with race_lock:
+                race_metrics['patron_bets_failed'] += 1
+            if verbose:
+                logging.info(f"  {patron_label} FAILED [{status_code}]: {msg[:80]}")
+
+
+# ============================================================================
+# Main test orchestrator
+# ============================================================================
+def collect_markets(mm_instance, event_name):
+    """Collect available markets for the target event"""
+    matching_events = mm_instance.find_event_by_id_or_name(event_name)
+    if not matching_events:
+        logging.error(f"No events found matching '{event_name}'")
+        logging.info("Available events:")
+        for evt_id, evt_data in list(mm_instance.sport_events.items())[:10]:
+            logging.info(f"  ID: {evt_id} | Name: {evt_data.get('name', 'Unknown')}")
+        return []
+
+    markets = []
+    for event in matching_events[:5]:
         event_name_str = event.get('name', 'Unknown')
         for market in event.get('markets', []):
             if market.get('selections'):
@@ -446,182 +771,440 @@ def run_backend_fairness_test(event_name, total_wagers=200, environment='sandbox
                     if isinstance(selection_group, list):
                         for selection in selection_group:
                             if selection.get('line_id'):
-                                available_markets.append({
+                                markets.append({
                                     'event_name': event_name_str,
                                     'market_type': market.get('type'),
                                     'line_id': selection['line_id'],
-                                    'selection_name': selection.get('name', 'Unknown')
+                                    'selection_name': selection.get('name', 'Unknown'),
                                 })
-    
-    if not available_markets:
-        logging.error(f"❌ No valid markets found")
-        return
-    
-    logging.info(f"✅ Collected {len(available_markets)} markets from {len(events_to_use)} events")
-    logging.info(f"   Markets will be rotated to spread bets across events\n")
-    
-    if verbose:
-        logging.info("\n🔍 VERBOSE MODE: Detailed per-wager logging enabled")
-        logging.info("   This will show requests from all users executing in parallel\n")
-    
-    # Send concurrent wagers (pass all markets, function will rotate through them)
-    all_wagers, elapsed = send_concurrent_wagers(mm_instances, available_markets, total_wagers, show_detailed_logs=verbose, max_workers=max_workers)
-    
-    # Report results
-    total_placed = sum([user_metrics[uid]['placed'] for uid in mm_instances.keys()])
-    logging.info(f"\n✅ Completed in {elapsed:.2f}s")
-    logging.info(f"   Total placed: {total_placed}/{total_wagers}")
-    logging.info(f"   Placement rate: {total_placed/elapsed:.1f} wagers/sec")
-    
-    # Analyze fairness
-    analyze_fairness(mm_instances)
-    
-    # Check final balances
-    logging.info("\n" + "="*70)
-    logging.info("BALANCE VERIFICATION")
-    logging.info("="*70)
-    
-    final_balances = {}
-    balance_changes = {}
-    
-    for user_id, mm_inst in mm_instances.items():
+    return markets
+
+
+def print_race_condition_report(elapsed, mm_instances, patron_infos):
+    """Print the final race condition analysis report"""
+    logging.info("")
+    logging.info("=" * 80)
+    logging.info("  RACE CONDITION TEST REPORT")
+    logging.info("=" * 80)
+
+    # Overview
+    logging.info(f"\n  Duration: {elapsed:.1f}s")
+    logging.info(f"  Total place-cancel cycles: {race_metrics['total_cycles']}")
+
+    # Bet placement
+    logging.info(f"\n  --- BET PLACEMENT ---")
+    logging.info(f"  Bets placed successfully:   {race_metrics['total_bets_placed']}")
+    logging.info(f"  Bets failed to place:       {race_metrics['total_bets_place_failed']}")
+
+    # Cancel results by type
+    logging.info(f"\n  --- BATCH CANCEL (cancel_multiple_wagers — same wager IDs) ---")
+    logging.info(f"  Requests sent:              {race_metrics['batch_cancel_sent']}")
+    logging.info(f"  Requests succeeded:         {race_metrics['batch_cancel_succeeded']}")
+    logging.info(f"  Requests failed:            {race_metrics['batch_cancel_failed']}")
+    logging.info(f"  Per-wager OK:               {race_metrics['batch_cancel_per_wager_ok']}")
+    logging.info(f"  Per-wager FAIL:             {race_metrics['batch_cancel_per_wager_fail']}")
+
+    logging.info(f"\n  --- CANCEL ALL (cancel_all_wagers — sweep) ---")
+    logging.info(f"  Requests sent:              {race_metrics['cancel_all_sent']}")
+    logging.info(f"  Requests succeeded:         {race_metrics['cancel_all_succeeded']}")
+    logging.info(f"  Requests failed:            {race_metrics['cancel_all_failed']}")
+
+    # Combined failure breakdown
+    total_wager_cancel_fails = (race_metrics['batch_cancel_per_wager_fail']
+                                + race_metrics['cancel_fail_still_processing']
+                                + race_metrics['cancel_fail_already_matched']
+                                + race_metrics['cancel_fail_already_cancelled']
+                                + race_metrics['cancel_fail_not_found']
+                                + race_metrics['cancel_fail_placing']
+                                + race_metrics['cancel_fail_other'])
+    logging.info(f"\n  --- CANCEL FAILURE BREAKDOWN (all types combined) ---")
+    logging.info(f"  Still processing (race):    {race_metrics['cancel_fail_still_processing']}  <-- RACE CONDITION")
+    logging.info(f"  Placing (409, bet delay):   {race_metrics['cancel_fail_placing']}  <-- RACE CONDITION")
+    logging.info(f"  Already matched:            {race_metrics['cancel_fail_already_matched']}")
+    logging.info(f"  Already cancelled:          {race_metrics['cancel_fail_already_cancelled']}")
+    logging.info(f"  Not found (404):            {race_metrics['cancel_fail_not_found']}")
+    logging.info(f"  Other errors:               {race_metrics['cancel_fail_other']}")
+
+    # Race condition rate
+    total_cancel_wagers = race_metrics['batch_cancel_per_wager_ok'] + race_metrics['batch_cancel_per_wager_fail']
+    race_hits = race_metrics['cancel_fail_still_processing'] + race_metrics['cancel_fail_placing']
+    if total_cancel_wagers > 0:
+        race_rate = race_hits / total_cancel_wagers * 100
+        fail_rate = race_metrics['batch_cancel_per_wager_fail'] / total_cancel_wagers * 100
+        logging.info(f"\n  RACE CONDITION HIT RATE:    {race_rate:.1f}% ({race_hits}/{total_cancel_wagers})")
+        logging.info(f"  BATCH CANCEL FAIL RATE:     {fail_rate:.1f}%")
+
+    # Gap analysis
+    gaps = race_metrics['race_condition_gaps']
+    if gaps:
+        avg_gap = sum(gaps) / len(gaps)
+        min_gap = min(gaps)
+        max_gap = max(gaps)
+        logging.info(f"\n  --- TIMING ANALYSIS ---")
+        logging.info(f"  Place-to-cancel gap (avg):  {avg_gap*1000:.2f}ms")
+        logging.info(f"  Place-to-cancel gap (min):  {min_gap*1000:.2f}ms")
+        logging.info(f"  Place-to-cancel gap (max):  {max_gap*1000:.2f}ms")
+
+    # Patron results
+    logging.info(f"\n  --- PATRON MATCHING ---")
+    logging.info(f"  Patron bets attempted:      {race_metrics['patron_bets_attempted']}")
+    logging.info(f"  Patron bets succeeded:      {race_metrics['patron_bets_succeeded']}")
+    logging.info(f"  Patron bets failed:         {race_metrics['patron_bets_failed']}")
+
+    # Per-user breakdown
+    logging.info(f"\n  --- PER-USER BREAKDOWN ---")
+    all_user_ids = list(user_metrics.keys())
+    for uid in all_user_ids:
+        m = user_metrics[uid]
+        avg_place = (sum(m['response_times_place']) / len(m['response_times_place']) * 1000
+                     if m['response_times_place'] else 0)
+        avg_cancel = (sum(m['response_times_cancel']) / len(m['response_times_cancel']) * 1000
+                      if m['response_times_cancel'] else 0)
+        logging.info(f"\n  MM {uid[:8]}...:")
+        logging.info(f"    Placed: {m['placed']}  |  Cancelled: {m['cancelled']}  |  Cancel failed: {m['cancel_failed']}")
+        logging.info(f"    Matched by patron: {m['matched_by_patron']}")
+        logging.info(f"    Avg place time: {avg_place:.0f}ms  |  Avg cancel time: {avg_cancel:.0f}ms")
+
+    # Balance check
+    logging.info(f"\n  --- BALANCE VERIFICATION ---")
+    for uid, mm_inst in mm_instances.items():
         try:
             mm_inst.get_balance()
-            final_balances[user_id] = mm_inst.balance
-            balance_changes[user_id] = initial_balances[user_id] - mm_inst.balance
+            logging.info(f"  MM {uid[:8]}...: ${mm_inst.balance:,.2f}")
         except Exception as e:
-            logging.error(f"   ❌ Could not fetch balance for {user_id}: {str(e)}")
-            final_balances[user_id] = None
-            balance_changes[user_id] = None
-    
-    # Display balance changes
-    total_spent = 0
-    for user_id in mm_instances.keys():
-        if final_balances[user_id] is not None:
-            logging.info(f"\n👤 User {user_id}:")
-            logging.info(f"   Initial:  ${initial_balances[user_id]:,.2f}")
-            logging.info(f"   Final:    ${final_balances[user_id]:,.2f}")
-            logging.info(f"   Spent:    ${balance_changes[user_id]:,.2f}")
-            logging.info(f"   Wagers:   {user_metrics[user_id]['placed']}")
-            if user_metrics[user_id]['placed'] > 0:
-                avg_per_wager = balance_changes[user_id] / user_metrics[user_id]['placed']
-                logging.info(f"   Avg/wager: ${avg_per_wager:.2f}")
-            total_spent += balance_changes[user_id]
-    
-    logging.info(f"\n📊 Total spent across all users: ${total_spent:,.2f}")
-    expected_spent = total_placed * 2.0  # $2 stake per wager
-    logging.info(f"   Expected ($2 per wager): ${expected_spent:,.2f}")
-    
-    if abs(total_spent - expected_spent) < 2.0:
-        logging.info(f"   ✅ Balance matches expected spending!")
+            logging.info(f"  MM {uid[:8]}...: Error getting balance - {e}")
+
+    for pinfo in patron_infos:
+        try:
+            auth_headers = {
+                'Authorization': f'Bearer {pinfo["jwt"]}',
+                'Content-Type': 'application/json',
+                'x-currency': 'cash',
+                'accept': 'application/json'
+            }
+            resp = requests.get(urljoin(pinfo['base_url'], 'api/v1/wallet'), headers=auth_headers)
+            if resp.status_code == 200:
+                bal = resp.json().get('data', {}).get('balance', 0)
+                logging.info(f"  Patron{pinfo['patron_num']}: ${bal:,.2f}")
+        except Exception as e:
+            logging.info(f"  Patron{pinfo['patron_num']}: Error - {e}")
+
+    # Error details (first 10)
+    if race_metrics['cancel_error_details']:
+        logging.info(f"\n  --- CANCEL ERROR SAMPLES (first 10) ---")
+        for err in race_metrics['cancel_error_details'][:10]:
+            logging.info(f"  [{err['timestamp']}] MM {err['mm_user']} | "
+                         f"HTTP {err['status_code']} | gap={err['gap_ms']:.1f}ms | "
+                         f"{err['error'][:100]}")
+
+    logging.info("\n" + "=" * 80)
+
+
+def run_race_condition_test(event_name, cycles=50, batch_size=10, cancel_gap=0.02,
+                             environment='sandbox', verbose=False,
+                             stake_min=1.0, stake_max=5.0,
+                             deduce_mode=False, max_workers=1, max_rps=2500,
+                             cancel_all_interval=0, mm_accounts=None, overlap_mode=False):
+    """
+    Main test runner.
+
+    Args:
+        event_name:          Target event name/ID
+        cycles:              Number of place-cancel cycles per MM account
+        batch_size:          Wagers per batch (max 20 for API)
+        cancel_gap:          Seconds between place response and cancel request (0.02 = 20ms)
+        environment:         sandbox or staging
+        verbose:             Detailed per-wager logging
+        stake_min:           Minimum random stake
+        stake_max:           Maximum random stake
+        deduce_mode:         True = MM1+MM2 vs Patron4+Patron8, False = MM2 vs Patron8 only
+        max_workers:         Concurrent workers per MM account (controls RPS)
+        max_rps:             Max wagers per second across all workers (0 = unlimited)
+        cancel_all_interval: Use cancel_all_wagers every N cycles (0 = never, batch cancel only)
+    """
+    test_start = time.time()
+
+    # Determine which MM accounts to load
+    if mm_accounts:
+        mm_account_list = mm_accounts
+        mode_label = f"CUSTOM MM ({'+'.join(str(a) for a in mm_account_list)})"
+    elif deduce_mode:
+        mm_account_list = [1, 2]
+        mode_label = "DEDUCE (MM1+MM2 vs Patron4+Patron8)"
     else:
-        diff = abs(total_spent - expected_spent)
-        logging.warning(f"   ⚠️  Difference: ${diff:,.2f}")
-    
-    logging.info("="*70 + "\n")
-    
-    # Save detailed results
+        mm_account_list = [2]
+        mode_label = "NON-DEDUCE (MM2 vs Patron8)"
+
+    logging.info("=" * 80)
+    logging.info("  RACE CONDITION TEST: Bet Batch vs Cancel Batch")
+    logging.info("=" * 80)
+    logging.info(f"  Environment:      {environment}")
+    logging.info(f"  Mode:             {mode_label}")
+    logging.info(f"  Target event:     {event_name}")
+    logging.info(f"  Cycles per MM:    {cycles}")
+    logging.info(f"  Batch size:       {batch_size}")
+    logging.info(f"  Cancel gap:       {cancel_gap*1000:.1f}ms")
+    logging.info(f"  Workers per MM:   {max_workers}")
+    logging.info(f"  Max RPS:          {max_rps} wagers/sec")
+    logging.info(f"  Stake range:      ${stake_min:.2f} - ${stake_max:.2f}")
+    if overlap_mode:
+        cancel_strat_label = "OVERLAP (place + cancel_all simultaneous + batch_cancel double-tap)"
+    else:
+        cancel_all_label = f"every {cancel_all_interval} cycles" if cancel_all_interval > 0 else "disabled (batch cancel only)"
+        cancel_strat_label = f"batch_cancel (primary) + cancel_all ({cancel_all_label})"
+    logging.info(f"  Cancel strategy:  {cancel_strat_label}")
+    logging.info(f"  Overlap mode:     {overlap_mode}")
+    logging.info(f"  Verbose:          {verbose}")
+    logging.info("=" * 80)
+
+    # --- Load MM accounts ---
+    logging.info("\n  Loading MM accounts...")
+    os.environ['MM_ENVIRONMENT'] = environment
+    import importlib
+    importlib.reload(config)
+
+    mm_instances = {}
+
+    for acct in mm_account_list:
+        try:
+            mm_inst, uid = load_mm_account(acct, environment)
+            mm_instances[uid] = mm_inst
+            logging.info(f"  MM {acct}:  {uid} (Balance: ${mm_inst.balance:,.2f})")
+        except Exception as e:
+            logging.error(f"  Failed to load MM {acct}: {e}")
+            return
+
+    if not mm_instances:
+        logging.error("  No MM accounts loaded, cannot run test")
+        return
+
+    # --- Load Patron accounts ---
+    logging.info("\n  Loading Patron accounts...")
+    patron_infos = []
+
+    if deduce_mode:
+        # Deduce mode: include Patron4 (deduce, usr004)
+        try:
+            p4 = load_patron_account(4, environment)
+            patron_infos.append(p4)
+            logging.info(f"  Patron4 (deduce):     loaded")
+        except Exception as e:
+            logging.warning(f"  Patron4 skipped: {e}")
+
+    # Patron8 always loaded (non-deduce, usr008)
+    try:
+        p8 = load_patron_account(8, environment)
+        patron_infos.append(p8)
+        logging.info(f"  Patron8 (non-deduce): loaded")
+    except Exception as e:
+        logging.warning(f"  Patron8 skipped: {e}")
+
+    if not patron_infos:
+        logging.error(f"  No patron accounts loaded, cannot run test")
+        return
+
+    # --- Collect markets ---
+    logging.info(f"\n  Collecting markets for '{event_name}'...")
+    markets = collect_markets(list(mm_instances.values())[0], event_name)
+    if not markets:
+        return
+    logging.info(f"  Found {len(markets)} markets across matching events")
+
+    # --- Start patron workers ---
+    logging.info(f"\n  Starting patron workers...")
+    stop_event = threading.Event()
+    patron_threads = []
+    for pinfo in patron_infos:
+        t = threading.Thread(
+            target=patron_worker,
+            args=(pinfo, stop_event, verbose),
+            daemon=True,
+            name=f"Patron{pinfo['patron_num']}Worker"
+        )
+        t.start()
+        patron_threads.append(t)
+    logging.info(f"  {len(patron_threads)} patron workers running")
+
+    # --- Start MM workers ---
+    if overlap_mode:
+        logging.info(f"\n  Starting MM OVERLAP cycles (place+cancel_all simultaneous, workers={max_workers})...")
+        logging.info(f"  Strategy: place + cancel_all fire at t=0 → batch_cancel double-tap on response")
+        logging.info(f"  No inter-cycle sleep — maximum server pressure")
+    else:
+        logging.info(f"\n  Starting MM place-cancel cycles (gap={cancel_gap*1000:.1f}ms, workers={max_workers})...")
+        logging.info(f"  Primary: place → get IDs → {cancel_gap*1000:.0f}ms → cancel_multiple_wagers (same IDs)")
+        if cancel_all_interval > 0:
+            logging.info(f"  Sweep:   every {cancel_all_interval} cycles → cancel_all_wagers (in-flight overlap)")
+    logging.info(f"  Each MM will run {cycles} cycles of {batch_size} wagers\n")
+
+    random_stake_range = (stake_min, stake_max)
+    rate_limiter = RateLimiter(max_rps) if max_rps > 0 else None
+    mm_threads = []
+    for uid, mm_inst in mm_instances.items():
+        t = threading.Thread(
+            target=mm_worker,
+            args=(mm_inst, uid, markets, cycles, batch_size, cancel_gap,
+                  random_stake_range, max_workers, rate_limiter,
+                  cancel_all_interval, verbose, overlap_mode),
+            daemon=True,
+            name=f"MM-{uid[:8]}"
+        )
+        t.start()
+        mm_threads.append(t)
+
+    # --- Wait for MM workers to finish with progress ---
+    last_progress = time.time()
+    while any(t.is_alive() for t in mm_threads):
+        time.sleep(1)
+        now = time.time()
+        if now - last_progress >= 5:
+            with race_lock:
+                c = race_metrics['total_cycles']
+                total_expected = cycles * len(mm_instances)
+                pct = c / total_expected * 100 if total_expected > 0 else 0
+                placed = race_metrics['total_bets_placed']
+                batch_ok = race_metrics['batch_cancel_per_wager_ok']
+                batch_fail = race_metrics['batch_cancel_per_wager_fail']
+                all_ok = race_metrics['cancel_all_succeeded']
+                all_fail = race_metrics['cancel_all_failed']
+                race_hits = race_metrics['cancel_fail_still_processing'] + race_metrics['cancel_fail_placing']
+                patron_ok = race_metrics['patron_bets_succeeded']
+            logging.info(f"  Progress: {c}/{total_expected} cycles ({pct:.0f}%) | "
+                         f"Placed: {placed} | BatchCancel OK/FAIL: {batch_ok}/{batch_fail} | "
+                         f"CancelAll OK/FAIL: {all_ok}/{all_fail} | "
+                         f"Race hits: {race_hits} | Patron matched: {patron_ok}")
+            last_progress = now
+
+    # Give patrons a moment to drain remaining queue
+    time.sleep(0.5)
+    stop_event.set()
+    for t in patron_threads:
+        t.join(timeout=2)
+
+    elapsed = time.time() - test_start
+
+    # --- Print report ---
+    print_race_condition_report(elapsed, mm_instances, patron_infos)
+
+    # --- Save results to JSON ---
     results = {
         'test_config': {
             'environment': environment,
             'event': event_name,
-            'total_wagers': total_wagers,
-            'num_users': len(mm_instances),
-            'duration_seconds': elapsed
+            'cycles_per_mm': cycles,
+            'batch_size': batch_size,
+            'cancel_gap_ms': cancel_gap * 1000,
+            'cancel_all_interval': cancel_all_interval,
+            'stake_range': [stake_min, stake_max],
+            'num_mm_accounts': len(mm_instances),
+            'num_patron_accounts': len(patron_infos),
+            'duration_seconds': elapsed,
         },
-        'per_user_metrics': {}
+        'race_metrics': {k: v for k, v in race_metrics.items()
+                         if k not in ('race_condition_gaps', 'cancel_error_details')},
+        'timing': {
+            'avg_gap_ms': (sum(race_metrics['race_condition_gaps']) / len(race_metrics['race_condition_gaps']) * 1000
+                           if race_metrics['race_condition_gaps'] else 0),
+            'min_gap_ms': (min(race_metrics['race_condition_gaps']) * 1000
+                           if race_metrics['race_condition_gaps'] else 0),
+            'max_gap_ms': (max(race_metrics['race_condition_gaps']) * 1000
+                           if race_metrics['race_condition_gaps'] else 0),
+        },
+        'cancel_error_samples': race_metrics['cancel_error_details'][:20],
+        'per_user_metrics': {uid: dict(m) for uid, m in user_metrics.items()},
     }
-    
-    for user_id in mm_instances.keys():
-        results['per_user_metrics'][user_id] = dict(user_metrics[user_id])
-    
-    output_file = f"backend_fairness_test_{int(time.time())}.json"
+
+    output_file = f"race_condition_test_{int(time.time())}.json"
     with open(output_file, 'w') as f:
         json.dump(results, f, indent=2, default=str)
-    
-    logging.info(f"📄 Detailed results saved to: {output_file}")
-    
-    # Generate SQL query for database verification
-    user_uuids = list(mm_instances.keys())
-    test_start = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(test_start_time))
-    test_end = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
-    
-    sql_query = f"""
--- Database Verification Query
--- Run this on the database to verify backend fairness
-
-SELECT 
-    count(*) as wager_count,
-    w.user_id,
-    ROUND(count(*) * 100.0 / SUM(count(*)) OVER (), 2) as percentage
-FROM wagers w
-WHERE w.created_at >= '{test_start}'
-  AND w.created_at <= '{test_end}'
-  AND w.user_id IN (
-{', '.join([f"    '{uid}'" for uid in user_uuids])}
-  )
-GROUP BY w.user_id
-ORDER BY wager_count DESC;
-
--- Expected: Each user should have ~{total_wagers // len(user_uuids)} wagers ({100/len(user_uuids):.1f}% each)
--- User UUIDs:
-{chr(10).join([f'--   {uid}' for uid in user_uuids])}
-"""
-    
-    sql_file = f"verify_fairness_{int(time.time())}.sql"
-    with open(sql_file, 'w') as f:
-        f.write(sql_query)
-    
-    logging.info(f"\n📊 Database Verification:")
-    logging.info(f"   SQL query saved to: {sql_file}")
-    logging.info(f"   Run this query on the database to verify backend fairness")
-    logging.info(f"   Expected: ~{total_wagers // len(user_uuids)} wagers per user ({100/len(user_uuids):.1f}% each)")
+    logging.info(f"\n  Results saved to: {output_file}")
 
 
+# ============================================================================
+# CLI
+# ============================================================================
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Test backend fairness enhancement - Stress Test')
-    parser.add_argument('--event', type=str, required=True, help='Event name to test')
-    parser.add_argument('--wagers', type=int, default=1000, help='Total wagers to send per iteration (default: 1000)')
-    parser.add_argument('--env', type=str, default='sandbox', choices=['sandbox', 'staging'],
-                       help='Environment (default: sandbox)')
-    parser.add_argument('--verbose', action='store_true', help='Enable detailed per-wager logging to prove parallel execution')
-    parser.add_argument('--workers', type=int, default=50, help='Max concurrent workers (default: 50, higher = faster)')
-    parser.add_argument('--continuous', action='store_true', help='Run continuously with automatic token refresh')
-    parser.add_argument('--iterations', type=int, default=0, help='Number of iterations in continuous mode (0=infinite, default: 0)')
-    parser.add_argument('--delay', type=int, default=5, help='Delay in seconds between continuous mode iterations (default: 5)')
-    parser.add_argument('--deducemode', action='store_true', help='Enable deduce mode: include MM1 (deduce-enabled) with MM2. If disabled, uses MM2-3 (non-deduce only)')
-    
+    parser = argparse.ArgumentParser(
+        description='Race Condition Test: Bet Batch vs Cancel Batch',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Non-deduce only (MM2 vs Patron8), batch cancel + cancel_all every 10 cycles
+  python test_backend_fairness.py --event "20023350" --cycles 50
+
+  # Batch cancel only (no cancel_all sweep)
+  python test_backend_fairness.py --event "20023350" --cycles 100 --cancel-all-interval 0
+
+  # Deduce mode (MM1+MM2 vs Patron4+Patron8)
+  python test_backend_fairness.py --event "20023350" --cycles 100 --deducemode
+
+  # High RPS with 50 concurrent workers per MM
+  python test_backend_fairness.py --event "20023350" --cycles 1000 --workers 50
+
+  # Zero gap — cancel immediately after getting place response
+  python test_backend_fairness.py --event "20023350" --cycles 100 --gap 0 --batch-size 15
+
+  # Full combo
+  python test_backend_fairness.py --event "20023350" --cycles 500 --deducemode --workers 20 --verbose
+        """
+    )
+    parser.add_argument('--event', type=str, required=True,
+                        help='Target event name or ID')
+    parser.add_argument('--cycles', type=int, default=50,
+                        help='Place-cancel cycles per MM account (default: 50)')
+    parser.add_argument('--batch-size', type=int, default=10,
+                        help='Wagers per batch, max 20 (default: 10)')
+    parser.add_argument('--gap', type=float, default=0.02,
+                        help='Seconds between place and cancel (default: 0.02 = 20ms)')
+    parser.add_argument('--env', type=str, default='sandbox',
+                        choices=['sandbox', 'staging'],
+                        help='Environment (default: sandbox)')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Enable detailed per-wager logging')
+    parser.add_argument('--stake-min', type=float, default=1.0,
+                        help='Minimum random stake (default: 1.0)')
+    parser.add_argument('--stake-max', type=float, default=5.0,
+                        help='Maximum random stake (default: 5.0)')
+    parser.add_argument('--deducemode', action='store_true',
+                        help='Enable deduce mode: MM1(deduce)+MM2(non-deduce) vs Patron4(deduce)+Patron8(non-deduce). '
+                             'Default: MM2(non-deduce) vs Patron8(non-deduce) only')
+    parser.add_argument('--workers', type=int, default=1,
+                        help='Concurrent workers per MM account for higher RPS (default: 1 = sequential)')
+    parser.add_argument('--rps', type=int, default=2500,
+                        help='Max wagers per second across all workers (default: 2500, 0 = unlimited)')
+    parser.add_argument('--cancel-all-interval', type=int, default=10,
+                        help='Use cancel_all_wagers every N cycles as sweep (default: 10, 0 = batch cancel only)')
+    parser.add_argument('--mm', type=str, nargs='+', default=None,
+                        help='MM accounts to use, e.g. --mm 1 2 exposure_mm1 exposure_mm2')
+    parser.add_argument('--overlap', action='store_true',
+                        help='Overlap mode: fire place + cancel_all simultaneously every cycle '
+                             '(designed to trigger database deadlocks). No inter-cycle sleep.')
+
     args = parser.parse_args()
-    
-    logging.info("\n" + "="*70)
-    logging.info("BACKEND FAIRNESS STRESS TEST")
-    logging.info("Testing requirement: 'For each 100 jobs in a batch, parallel by user id'")
-    logging.info("Backend should handle batching and ensure fairness")
-    if args.continuous:
-        logging.info("🔄 CONTINUOUS MODE: Token auto-refresh enabled")
-        if args.iterations > 0:
-            logging.info(f"   Running {args.iterations} iterations")
-        else:
-            logging.info("   Running indefinitely (Ctrl+C to stop)")
-        logging.info(f"   Delay between iterations: {args.delay}s")
-    logging.info("="*70 + "\n")
-    
-    if args.continuous:
-        iteration = 0
-        try:
-            while args.iterations == 0 or iteration < args.iterations:
-                iteration += 1
-                logging.info(f"\n{'='*70}")
-                logging.info(f"🔄 ITERATION {iteration}" + (f" / {args.iterations}" if args.iterations > 0 else ""))
-                logging.info(f"{'='*70}\n")
-                
-                run_backend_fairness_test(args.event, args.wagers, args.env, verbose=args.verbose, max_workers=args.workers, deduce_mode=args.deducemode)
-                
-                if args.iterations == 0 or iteration < args.iterations:
-                    logging.info(f"\n⏸️  Waiting {args.delay}s before next iteration...\n")
-                    time.sleep(args.delay)
-        except KeyboardInterrupt:
-            logging.info("\n\n⏹️  Continuous mode stopped by user")
-            logging.info(f"   Completed {iteration} iteration(s)\n")
-    else:
-        run_backend_fairness_test(args.event, args.wagers, args.env, verbose=args.verbose, max_workers=args.workers, deduce_mode=args.deducemode)
+
+    # Validate batch size
+    if args.batch_size > 20:
+        logging.warning("Batch size capped at 20 (API limit)")
+        args.batch_size = 20
+
+    # Parse --mm accounts: convert pure digits to int, keep strings as-is
+    mm_accounts = None
+    if args.mm:
+        mm_accounts = [int(x) if x.isdigit() else x for x in args.mm]
+
+    run_race_condition_test(
+        event_name=args.event,
+        cycles=args.cycles,
+        batch_size=args.batch_size,
+        cancel_gap=args.gap,
+        environment=args.env,
+        verbose=args.verbose,
+        stake_min=args.stake_min,
+        stake_max=args.stake_max,
+        deduce_mode=args.deducemode,
+        max_workers=args.workers,
+        max_rps=args.rps,
+        cancel_all_interval=args.cancel_all_interval,
+        mm_accounts=mm_accounts,
+        overlap_mode=args.overlap,
+    )

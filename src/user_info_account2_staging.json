@@ -2,5 +2,5 @@
     "_comment": "Staging credentials for Market Maker API - User 2",
     "access_key": "c66eb9a84f20ca15c32025cdc842a665",
     "secret_key": "d339b5a5539cdd4a955a8a2c226738ea",
-    "tournaments": ["NBA", "College Basketball", "NHL", "MLB"]
+    "tournaments": ["NBA", "College Basketball", "NHL", "MLB", "WTA"]
 }

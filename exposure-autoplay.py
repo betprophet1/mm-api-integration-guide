@@ -20,7 +20,8 @@ from urllib.parse import urljoin
 
 # Configuration
 BASE_URL = "https://api-ss-sandbox.betprophet.co"
-TARGET_EVENTS = 3  # Number of events to generate GEC from
+TARGET_EVENTS = 1  # Number of events to generate GEC from
+TARGET_EVENT_ID = 60073014  # Specific event to target
 MAX_BET_ROUNDS = 20  # Maximum betting rounds per event
 
 # Account credentials
@@ -311,20 +312,23 @@ class ExposureAutoplay:
         multiple_markets_url = urljoin(BASE_URL, "partner/mm/get_multiple_markets")
         
         all_event_ids = []
-        
+
         try:
-            # Get events from all tournaments
-            for tournament_id in shared_data["tournament_ids"]:
-                response = requests.get(events_url, 
-                                      params={'tournament_id': tournament_id}, 
-                                      headers=self.get_mm_auth_header(), timeout=10)
-                
-                if response.status_code == 200:
-                    events = response.json().get('data', {}).get('sport_events', [])
-                    if events:
-                        # Use first 3 events from each tournament
-                        tournament_event_ids = [event['event_id'] for event in events[:3]]
-                        all_event_ids.extend(tournament_event_ids)
+            # Use target event directly if set, otherwise discover from tournaments
+            if TARGET_EVENT_ID:
+                all_event_ids = [TARGET_EVENT_ID]
+                print(f"🎯 Using target event: {TARGET_EVENT_ID}")
+            else:
+                for tournament_id in shared_data["tournament_ids"]:
+                    response = requests.get(events_url,
+                                          params={'tournament_id': tournament_id},
+                                          headers=self.get_mm_auth_header(), timeout=10)
+
+                    if response.status_code == 200:
+                        events = response.json().get('data', {}).get('sport_events', [])
+                        if events:
+                            tournament_event_ids = [event['event_id'] for event in events[:3]]
+                            all_event_ids.extend(tournament_event_ids)
             
             if not all_event_ids:
                 print("❌ No events found in any tournament")
@@ -513,7 +517,7 @@ def coordinate_betting_for_gec_generation(authenticated_testers):
     
     # Ensure both are logged in
     for tester in testers:
-        if not (tester.mm_token and tester.web_token):
+        if not tester.mm_token:
             print(f"❌ {tester.account['name']} not properly authenticated")
             return False
     
@@ -715,7 +719,9 @@ def main():
     def authenticate_account(tester):
         mm_success = tester.mm_login()
         web_success = tester.web_login()
-        return tester, mm_success and web_success
+        if not web_success:
+            print(f"⚠️  {tester.account['name']} - Web login failed (exposure checks will be skipped)")
+        return tester, mm_success  # Only MM login is required
     
     with ThreadPoolExecutor(max_workers=2) as executor:
         auth_futures = [executor.submit(authenticate_account, tester) for tester in testers]
@@ -738,10 +744,10 @@ def main():
     
     account1_tester = next(t for t in testers if t.account['id'] == 1)
     
-    if not account1_tester.seed_tournament():
-        print("❌ Tournament seeding failed")
-        return
-    
+    # Skip tournament discovery - target specific event directly
+    shared_data["tournament_ids"] = ["direct"]
+    print(f"🎯 Targeting specific event: {TARGET_EVENT_ID}")
+
     if not account1_tester.get_events_and_markets():
         print("❌ Events/Markets seeding failed")
         return

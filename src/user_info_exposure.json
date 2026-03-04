@@ -1,0 +1,22 @@
+{
+    "exposure_mm1": {
+        "id": 1,
+        "name": "Account 3",
+        "email": "thanos_exposure_19300@gmail.com",
+        "password": "123123Aa",
+        "access_key": "fd0a93b1215c35c67b692d09cd650f43",
+        "secret_key": "c006009cab7bb77f80e3b63c8842dfef",
+        "user_uuid": "6e7a16d4-c154-49d6-b764-a16289d27929",
+        "tournaments": ["NBA", "College Basketball", "NHL", "MLB", "WTA"]
+    },
+    "exposure_mm2": {
+        "id": 2,
+        "name": "Account 4",
+        "email": "thanos_exposure_19301@gmail.com",
+        "password": "123123Aa",
+        "access_key": "c958baa4a0660946c2dfd877acdec4ab",
+        "secret_key": "9882c8ff7f6b97801c81527713d6870e",
+        "user_uuid": "3a213635-88e1-4417-ab49-b3db9436c39",
+        "tournaments": ["NBA", "College Basketball", "NHL", "MLB", "WTA"]
+    }
+}

@@ -1,0 +1,11 @@
+{
+  "access_key": "0ae78bb21d65b63f50be233ef8920a3d",
+  "secret_key": "fabbd6ac54d0f59356c30955491b3058",
+  "tournaments": [
+    "MLB",
+    "NBA",
+    "NHL",
+    "NCAAB",
+    "WTA"
+  ]
+}
