@@ -1,0 +1,151 @@
+2026-01-28 07:38:30 INFO     [92m✓ Logged in mm2 (mm)[0m
+2026-01-28 07:38:31 INFO     [96m💰 mm2: Balance=$10046341.84, Matched=$37397.07, Unmatched=$999.41, Available=$10007945.36[0m
+2026-01-28 07:38:32 INFO     [92m✓ Logged in patron_nondeduce (patron)[0m
+2026-01-28 07:38:34 INFO     Fetched odds ladder: 251 odds values
+2026-01-28 07:38:35 INFO     Found current line_id in market 'Moneyline' with 4 total lines
+2026-01-28 07:38:35 INFO     Found opposite line_id: 406a42660fa0c7ed...
+2026-01-28 07:38:36 INFO     [92m✓ mm2 placed wager: $2.0 at odds 184 (ID: partner_...)[0m
+2026-01-28 07:38:36 INFO     [92m✓ mm2 placed wager: $2.0 at odds 465 (ID: partner_...)[0m
+2026-01-28 07:38:36 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -184 (ID: 26537329...)[0m
+2026-01-28 07:38:37 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -465 (ID: 26537331...)[0m
+2026-01-28 07:38:37 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:38:38 INFO     [92m✓ mm2 placed wager: $2.0 at odds 315 (ID: partner_...)[0m
+2026-01-28 07:38:38 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -315 (ID: 26537333...)[0m
+2026-01-28 07:38:39 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:38:39 INFO     [92m✓ mm2 placed wager: $2.0 at odds 235 (ID: partner_...)[0m
+2026-01-28 07:38:40 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -235 (ID: 26537335...)[0m
+2026-01-28 07:38:40 INFO     [92m✓ mm2 placed wager: $2.0 at odds 176 (ID: partner_...)[0m
+2026-01-28 07:38:41 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -176 (ID: 26537337...)[0m
+2026-01-28 07:38:41 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:38:41 INFO     [92m✓ mm2 placed wager: $2.0 at odds 121 (ID: partner_...)[0m
+2026-01-28 07:38:42 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -121 (ID: 26537339...)[0m
+2026-01-28 07:38:42 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:38:43 INFO     [92m✓ mm2 placed wager: $2.0 at odds 330 (ID: partner_...)[0m
+2026-01-28 07:38:43 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -330 (ID: 26537341...)[0m
+2026-01-28 07:38:43 INFO     [92m✓ mm2 placed wager: $2.0 at odds 365 (ID: partner_...)[0m
+2026-01-28 07:38:44 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:38:44 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -365 (ID: 26537343...)[0m
+2026-01-28 07:38:45 INFO     [92m✓ mm2 placed wager: $2.0 at odds 112 (ID: partner_...)[0m
+2026-01-28 07:38:45 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -112 (ID: 26537345...)[0m
+2026-01-28 07:38:45 INFO     [92m✓ mm2 placed wager: $2.0 at odds 138 (ID: partner_...)[0m
+2026-01-28 07:38:46 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -138 (ID: 26537347...)[0m
+2026-01-28 07:38:46 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:38:47 INFO     [92m✓ mm2 placed wager: $2.0 at odds 158 (ID: partner_...)[0m
+2026-01-28 07:38:47 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:38:48 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -158 (ID: 26537349...)[0m
+2026-01-28 07:38:48 INFO     [92m✓ mm2 placed wager: $2.0 at odds 127 (ID: partner_...)[0m
+2026-01-28 07:38:49 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -127 (ID: 26537351...)[0m
+2026-01-28 07:38:49 INFO     [92m✓ mm2 placed wager: $2.0 at odds 320 (ID: partner_...)[0m
+2026-01-28 07:38:50 INFO     [92m✓ mm2 placed wager: $2.0 at odds 134 (ID: partner_...)[0m
+2026-01-28 07:38:50 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -320 (ID: 26537354...)[0m
+2026-01-28 07:38:50 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -134 (ID: 26537355...)[0m
+2026-01-28 07:38:50 INFO     [92m✓ mm2 placed wager: $2.0 at odds 470 (ID: partner_...)[0m
+2026-01-28 07:38:51 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -470 (ID: 26537360...)[0m
+2026-01-28 07:38:51 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:38:52 INFO     [92m✓ mm2 placed wager: $2.0 at odds 460 (ID: partner_...)[0m
+2026-01-28 07:38:52 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:38:52 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -460 (ID: 26537362...)[0m
+2026-01-28 07:38:53 INFO     [92m✓ mm2 placed wager: $2.0 at odds 182 (ID: partner_...)[0m
+2026-01-28 07:38:54 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:38:54 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -182 (ID: 26537364...)[0m
+2026-01-28 07:38:54 INFO     [92m✓ mm2 placed wager: $2.0 at odds 430 (ID: partner_...)[0m
+2026-01-28 07:38:55 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -430 (ID: 26537366...)[0m
+2026-01-28 07:38:55 INFO     [92m✓ mm2 placed wager: $2.0 at odds 129 (ID: partner_...)[0m
+2026-01-28 07:38:56 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -129 (ID: 26537368...)[0m
+2026-01-28 07:38:56 INFO     [92m✓ mm2 placed wager: $2.0 at odds 395 (ID: partner_...)[0m
+2026-01-28 07:38:56 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -395 (ID: 26537370...)[0m
+2026-01-28 07:38:56 INFO     [92m✓ mm2 placed wager: $2.0 at odds 126 (ID: partner_...)[0m
+2026-01-28 07:38:57 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -126 (ID: 26537372...)[0m
+2026-01-28 07:38:57 INFO     [92m✓ mm2 placed wager: $2.0 at odds 475 (ID: partner_...)[0m
+2026-01-28 07:38:58 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -475 (ID: 26537374...)[0m
+2026-01-28 07:38:58 INFO     [92m✓ mm2 placed wager: $2.0 at odds 325 (ID: partner_...)[0m
+2026-01-28 07:38:58 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -325 (ID: 26537376...)[0m
+2026-01-28 07:38:58 INFO     [92m✓ mm2 placed wager: $2.0 at odds 345 (ID: partner_...)[0m
+2026-01-28 07:38:59 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -345 (ID: 26537378...)[0m
+2026-01-28 07:38:59 INFO     [92m✓ mm2 placed wager: $2.0 at odds 150 (ID: partner_...)[0m
+2026-01-28 07:39:00 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -150 (ID: 26537380...)[0m
+2026-01-28 07:39:00 INFO     [92m✓ mm2 placed wager: $2.0 at odds 340 (ID: partner_...)[0m
+2026-01-28 07:39:00 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -340 (ID: 26537382...)[0m
+2026-01-28 07:39:00 INFO     [92m✓ mm2 placed wager: $2.0 at odds 390 (ID: partner_...)[0m
+2026-01-28 07:39:01 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -390 (ID: 26537384...)[0m
+2026-01-28 07:39:01 INFO     [92m✓ mm2 placed wager: $2.0 at odds 365 (ID: partner_...)[0m
+2026-01-28 07:39:02 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -365 (ID: 26537386...)[0m
+2026-01-28 07:39:02 INFO     [92m✓ mm2 placed wager: $2.0 at odds 128 (ID: partner_...)[0m
+2026-01-28 07:39:02 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -128 (ID: 26537388...)[0m
+2026-01-28 07:39:02 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:39:03 INFO     [92m✓ mm2 placed wager: $2.0 at odds 200 (ID: partner_...)[0m
+2026-01-28 07:39:04 INFO     [92m✓ patron_nondeduce placed wager: $2.0 at odds -200 (ID: 26537394...)[0m
+2026-01-28 07:39:04 INFO     [92m✓ mm2 cancelled wager[0m
+2026-01-28 07:39:04 INFO     [92m✓ mm2 placed wager: $2.0 at odds 100 (ID: partner_...)[0m
+2026-01-28 07:39:05 ERROR    [91m✗ Failed to cancel wager: b'{"error":"wager_already_matched","message":"Failed to cancel play. play is already matched"}'[0m
+2026-01-28 07:39:05 ERROR    [91m✗ Failed to place wager for patron_nondeduce: {"error":"the odds must be greater than or equal to 100 or less than -100: update odds and try again","error_code":30010}[0m
+2026-01-28 07:39:11 INFO     [96m💰 mm2: Balance=$10046303.84, Matched=$37416.35, Unmatched=$1018.13, Available=$10007869.36[0m
+
+[1m[96m======================================================================[0m
+[1m[96mNON-DEDUCE ONLY TEST SUITE[0m
+[1m[96mEvent: 30024812[0m
+[1m[96m======================================================================[0m
+
+
+[1m[95m======================================================================[0m
+[1m[95mTest: Cancel Race - NON-DEDUCE ACCOUNTS ONLY[0m
+[1m[95mEvent ID: 30024812[0m
+[1m[95m======================================================================[0m
+
+[96m📦 Setting up NON-DEDUCE accounts only...[0m
+
+[92m✅ MM2 (NON-DEDUCE) logged in[0m
+[96mMM2 Initial balance: $10,046,341.84[0m
+
+[92m✅ Patron non-deduce (matcher) logged in[0m
+
+[96m🔍 Getting markets for event 30024812...[0m
+[92m✅ Event: Unknown (ID: 30024812)[0m
+[96mMarket: Unknown (line: 29e8e4cd5b8f87f9...)[0m
+
+[93m🎯 Fetching odds ladder...[0m
+[92m✅ Loaded 251 odds values[0m
+[93m🔍 Finding opposite line_id for patrons...[0m
+[92m✅ Opposite line found (line: 406a42660fa0c7ed...)[0m
+
+[1m🚀 Starting 30s place & cancel test (NON-DEDUCE ONLY)...[0m
+[96m   Cancel rate: 50% of wagers will be cancelled[0m
+[96m   MM2 bets on line: 29e8e4cd5b8f87f9...[0m
+[96m   Patrons match on: 406a42660fa0c7ed...[0m
+
+[94m📊 patron_nondeduce: 10 matches[0m
+[93m📊 MM2: 20 placed[0m
+[94m📊 patron_nondeduce: 20 matches[0m
+[94m📊 patron_nondeduce: 30 matches[0m
+
+[92m✅ Test completed![0m
+   MM2: 31 placed, 12 cancelled
+   Patron matches: 30
+   Errors: 1
+
+[96m⏳ Waiting 5s for system to process...[0m
+
+[1m======================================================================[0m
+[1mRESULTS - NON-DEDUCE ONLY[0m
+[1m======================================================================[0m
+
+[96mMM2 (NON-DEDUCE):[0m
+  Initial balance: $10,046,341.84
+  Final balance:   $10,046,303.84
+  Change:          $38.00
+
+[1mBET DELAY STATS:[0m
+  Avg delay: 0.668s
+  Min delay: 0.643s
+  Max delay: 0.766s
+
+[1mERRORS:[0m
+  patron_nondeduce-MATCH: 1
+
+[92m📄 Report saved: nondeduce_only_test_30024812_1769560751.json[0m
+
+
+[1m[92m======================================================================[0m
+[1m[92mTEST COMPLETED[0m
+[1m[92m======================================================================[0m
+

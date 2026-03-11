@@ -1,0 +1,35 @@
+{
+  "duration_s": 1497.2182660102844,
+  "event_id": 20023409,
+  "accounts": 4,
+  "workers_per_account": 20,
+  "stake": 100.0,
+  "stats": {
+    "bets_placed": 48041,
+    "bets_failed": 50572,
+    "gec_pairs": 0,
+    "by_account": {
+      "usr001": {
+        "placed": 12284,
+        "failed": 12333,
+        "gecs": 0
+      },
+      "Exposure-MM2": {
+        "placed": 11074,
+        "failed": 13448,
+        "gecs": 0
+      },
+      "usr002": {
+        "placed": 12337,
+        "failed": 12389,
+        "gecs": 0
+      },
+      "Exposure-MM1": {
+        "placed": 12346,
+        "failed": 12402,
+        "gecs": 0
+      }
+    }
+  },
+  "errors_count": 438
+}

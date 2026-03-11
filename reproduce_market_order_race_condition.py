@@ -43,11 +43,15 @@ stats = {
     'market_orders_timeout': 0,
     'market_orders_failed': 0,
     'potential_race_conditions': 0,
+    'cancel_before_timeout_success': 0,
+    'cancel_before_timeout_failed': 0,
+    'cancel_after_timeout_already_cancelled': 0,
+    'cancel_after_timeout_unexpected': 0,
 }
 stats_lock = threading.Lock()
 
 DEDUCE_USER_UUID = '279cc6a1-d926-4273-a18a-782eccfbce7b'  # Exclude from liquidity
-TARGET_EVENT_ID = 20023066
+TARGET_EVENT_ID = 20023066  # Default event ID, can be overridden by --event-id
 
 
 def load_patron_account(environment='sandbox'):
@@ -363,10 +367,29 @@ def get_estimate_odds(patron, line_id, stake):
         return None, None, None
 
 
-def place_market_order(patron, line_id, stake, expected_avg_odds, odds_list):
+def cancel_market_order(patron, wager_id):
+    """
+    Cancel a Market Order
+    Returns: (success, response_text)
+    """
+    cancel_url = urljoin(patron.base_url, f'trade/private/api/v1/market-orders/{wager_id}')
+    headers = patron.get_auth_header()
+    
+    try:
+        response = requests.delete(cancel_url, headers=headers)
+        if response.status_code == 200:
+            return True, response.text
+        else:
+            return False, response.text
+    except Exception as e:
+        return False, str(e)
+
+
+def place_market_order(patron, line_id, stake, expected_avg_odds, odds_list, expected_timeout=5.0):
     """
     Place a Market Order
     Returns: (success, wager_id, status)
+    :param expected_timeout: Expected timeout in seconds (5s for normal, 10s for live)
     """
     mo_url = urljoin(patron.base_url, 'trade/private/api/v1/market-orders')
     
@@ -391,9 +414,10 @@ def place_market_order(patron, line_id, stake, expected_avg_odds, odds_list):
             
             logging.info(f"✅ Market Order placed: ID={wager_id}, Status={status}, Elapsed={elapsed:.2f}s")
             
-            # Check if it took close to 5 seconds (potential timeout scenario)
-            if elapsed >= 4.5:
-                logging.warning(f"⚠️  POTENTIAL RACE CONDITION: Order took {elapsed:.2f}s (near 5s timeout)")
+            # Check if it took close to expected timeout (potential timeout scenario)
+            timeout_threshold = expected_timeout - 0.5  # Check if within 0.5s of timeout
+            if elapsed >= timeout_threshold:
+                logging.warning(f"⚠️  POTENTIAL RACE CONDITION: Order took {elapsed:.2f}s (near {expected_timeout}s timeout)")
                 with stats_lock:
                     stats['potential_race_conditions'] += 1
             
@@ -406,15 +430,18 @@ def place_market_order(patron, line_id, stake, expected_avg_odds, odds_list):
         return False, None, None
 
 
-def market_order_worker(patron, line_ids, duration_seconds, worker_name="Patron"):
+def market_order_worker(patron, line_ids, duration_seconds, expected_timeout, worker_name="Patron", verify_timeout=False):
     """
     Worker function for placing market orders
     Runs concurrently to maximize stress on the system
+    :param expected_timeout: Expected timeout in seconds (5s for normal, 10s for live)
+    :param verify_timeout: If True, periodically test cancel before/after timeout
     """
     start_time = time.time()
     order_count = 0
+    verification_count = 0
     
-    logging.info(f"🚀 {worker_name}: Starting market order worker")
+    logging.info(f"🚀 {worker_name}: Starting market order worker (Timeout verification: {verify_timeout})")
     
     while time.time() - start_time < duration_seconds:
         # Randomly select a line_id
@@ -455,9 +482,9 @@ def market_order_worker(patron, line_ids, duration_seconds, worker_name="Patron"
         
         # Step 3: Place Market Order with safe stake amount
         if max_stake > 0 and avg_odds and odds_list and max_stake <= available_balance:
-            success, wager_id, status = place_market_order(patron, line_id, max_stake, avg_odds, odds_list)
+            success, wager_id, status = place_market_order(patron, line_id, max_stake, avg_odds, odds_list, expected_timeout)
             
-            if success:
+            if success and wager_id:
                 with stats_lock:
                     stats['market_orders_placed'] += 1
                     if status == 'matched':
@@ -467,14 +494,62 @@ def market_order_worker(patron, line_ids, duration_seconds, worker_name="Patron"
                 
                 order_count += 1
                 
+                # Perform timeout verification test every 5 orders
+                if verify_timeout and order_count % 5 == 0 and status == 'pending':
+                    verification_count += 1
+                    logging.info(f"\n🔍 {worker_name}: TIMEOUT VERIFICATION TEST #{verification_count}")
+                    logging.info(f"   Wager ID: {wager_id}")
+                    logging.info(f"   Expected timeout: {expected_timeout}s")
+                    
+                    # Test 1: Cancel BEFORE timeout (at 50% of timeout)
+                    cancel_before_delay = expected_timeout * 0.5
+                    logging.info(f"   Test 1: Cancelling at {cancel_before_delay:.1f}s (BEFORE timeout)")
+                    time.sleep(cancel_before_delay)
+                    
+                    cancel_success, cancel_response = cancel_market_order(patron, wager_id)
+                    if cancel_success:
+                        logging.info(f"   ✅ Cancel succeeded (expected) - wager cancelled before timeout")
+                        with stats_lock:
+                            stats['cancel_before_timeout_success'] += 1
+                    else:
+                        if 'already matched' in cancel_response.lower() or 'already cancelled' in cancel_response.lower():
+                            logging.info(f"   ⚠️  Wager already processed - matched/cancelled before cancel request")
+                        else:
+                            logging.warning(f"   ❌ Cancel failed (unexpected): {cancel_response[:100]}")
+                            with stats_lock:
+                                stats['cancel_before_timeout_failed'] += 1
+                    
+                    # Test 2: Wait until AFTER timeout and try cancel again
+                    remaining_time = expected_timeout - cancel_before_delay + 2.0  # Wait 2s past timeout
+                    logging.info(f"   Test 2: Waiting {remaining_time:.1f}s more (AFTER {expected_timeout}s timeout)")
+                    time.sleep(remaining_time)
+                    
+                    cancel_success2, cancel_response2 = cancel_market_order(patron, wager_id)
+                    if not cancel_success2:
+                        if 'already cancelled' in cancel_response2.lower() or 'not found' in cancel_response2.lower():
+                            logging.info(f"   ✅ Wager already timed out/cancelled (expected behavior)")
+                            with stats_lock:
+                                stats['cancel_after_timeout_already_cancelled'] += 1
+                        else:
+                            logging.warning(f"   ⚠️  Unexpected response: {cancel_response2[:100]}")
+                            with stats_lock:
+                                stats['cancel_after_timeout_unexpected'] += 1
+                    else:
+                        logging.warning(f"   ❌ Cancel succeeded AFTER timeout (unexpected!)")
+                        with stats_lock:
+                            stats['cancel_after_timeout_unexpected'] += 1
+                    
+                    logging.info(f"   Verification complete\n")
+                
                 if order_count % 20 == 0:
                     logging.info(f"📊 {worker_name}: {order_count} orders placed")
             else:
                 with stats_lock:
                     stats['market_orders_failed'] += 1
         
-        # Small delay between orders
-        time.sleep(1)
+        # Small delay between orders (skip if we just did verification)
+        if not (verify_timeout and order_count % 5 == 0):
+            time.sleep(1)
     
     logging.info(f"✅ {worker_name}: Completed {order_count} market orders")
 
@@ -484,6 +559,14 @@ def run_market_order_stress_test(patron, mm_instances, target_event_id, duration
     Continuously place Market Orders on target event using concurrent workers
     This tries to hit the race condition where orders match at timeout
     """
+    # Determine expected timeout based on event type
+    # Live events (event_id starts with 1500) have 10s timeout
+    # Normal events have 5s timeout
+    is_live_event = str(target_event_id).startswith('1500')
+    expected_timeout = 10.0 if is_live_event else 5.0
+    event_type = "LIVE" if is_live_event else "NORMAL"
+    
+    logging.info(f"\n🎯 Event Type: {event_type} (Expected timeout: {expected_timeout}s)")
     logging.info(f"\n🚀 Starting Market Order stress test for event {target_event_id}")
     logging.info(f"   Duration: {duration_seconds}s")
     logging.info(f"   Workers: {patron_workers} patron workers")
@@ -530,12 +613,16 @@ def run_market_order_stress_test(patron, mm_instances, target_event_id, duration
         futures = []
         for worker_num in range(patron_workers):
             worker_name = f"Patron-W{worker_num+1}" if patron_workers > 1 else "Patron"
+            # Enable verification for first worker only to avoid conflicts
+            verify_timeout = (worker_num == 0)
             future = executor.submit(
                 market_order_worker,
                 patron,
                 line_ids,
                 duration_seconds,
-                worker_name
+                expected_timeout,
+                worker_name,
+                verify_timeout
             )
             futures.append(future)
         
@@ -554,12 +641,20 @@ def print_final_report():
     logging.info("\n" + "="*70)
     logging.info("MARKET ORDER RACE CONDITION TEST - FINAL REPORT")
     logging.info("="*70)
-    logging.info(f"Liquidity Wagers Placed:      {stats['liquidity_wagers_placed']}")
+    logging.info(f"Liquidity Wagers Placed:       {stats['liquidity_wagers_placed']}")
     logging.info(f"Market Orders Placed:          {stats['market_orders_placed']}")
     logging.info(f"  - Matched:                   {stats['market_orders_matched']}")
     logging.info(f"  - Timeout/Cancelled:         {stats['market_orders_timeout']}")
     logging.info(f"  - Failed:                    {stats['market_orders_failed']}")
     logging.info(f"Potential Race Conditions:     {stats['potential_race_conditions']}")
+    logging.info("")
+    logging.info("TIMEOUT VERIFICATION RESULTS:")
+    logging.info(f"  Cancel Before Timeout:")
+    logging.info(f"    - Success:                 {stats['cancel_before_timeout_success']}")
+    logging.info(f"    - Failed:                  {stats['cancel_before_timeout_failed']}")
+    logging.info(f"  Cancel After Timeout:")
+    logging.info(f"    - Already Cancelled:       {stats['cancel_after_timeout_already_cancelled']}")
+    logging.info(f"    - Unexpected:              {stats['cancel_after_timeout_unexpected']}")
     logging.info("="*70)
     logging.info("")
     logging.info("⚠️  CHECK DATABASE FOR RACE CONDITION:")
@@ -579,13 +674,22 @@ def print_final_report():
     logging.info("="*70 + "\n")
 
 
-def main(environment='sandbox', duration=300, workers_per_account=5):
+def main(environment='sandbox', duration=300, workers_per_account=5, target_event_id=None):
     """Main function to run the race condition reproducer"""
+    # Use provided event_id or default
+    event_id = target_event_id if target_event_id else TARGET_EVENT_ID
+    
+    # Determine event type
+    is_live = str(event_id).startswith('1500')
+    event_type = "LIVE" if is_live else "NORMAL"
+    expected_timeout = 10.0 if is_live else 5.0
+    
     logging.info("\n" + "="*70)
     logging.info("MARKET ORDER RACE CONDITION REPRODUCER")
     logging.info("="*70)
     logging.info(f"Environment: {environment}")
-    logging.info(f"Target Event: {TARGET_EVENT_ID}")
+    logging.info(f"Target Event: {event_id} ({event_type})")
+    logging.info(f"Expected Timeout: {expected_timeout}s")
     logging.info(f"Duration: {duration}s ({duration/60:.1f} minutes)")
     logging.info(f"Workers per Account: {workers_per_account}x")
     logging.info(f"Excluding Deduce User: {DEDUCE_USER_UUID}")
@@ -605,7 +709,7 @@ def main(environment='sandbox', duration=300, workers_per_account=5):
     # Start liquidity provision in background thread
     liquidity_thread = threading.Thread(
         target=provide_liquidity_continuously,
-        args=(mm_instances, TARGET_EVENT_ID, duration, workers_per_account),
+        args=(mm_instances, event_id, duration, workers_per_account),
         daemon=True
     )
     liquidity_thread.start()
@@ -615,7 +719,7 @@ def main(environment='sandbox', duration=300, workers_per_account=5):
     time.sleep(10)
     
     # Start Market Order stress test in main thread
-    run_market_order_stress_test(patron, mm_instances, TARGET_EVENT_ID, duration - 10, workers_per_account)
+    run_market_order_stress_test(patron, mm_instances, event_id, duration - 10, workers_per_account)
     
     # Wait for liquidity thread to finish
     liquidity_thread.join(timeout=30)
@@ -632,6 +736,8 @@ if __name__ == '__main__':
                        help='Test duration in seconds (default: 300 = 5 minutes)')
     parser.add_argument('--workers', type=int, default=5,
                        help='Workers per account for scalability (default: 5, range: 1-10)')
+    parser.add_argument('--event-id', type=int, default=None,
+                       help='Target event ID (optional, overrides default)')
     
     args = parser.parse_args()
     
@@ -640,4 +746,4 @@ if __name__ == '__main__':
         logging.error("❌ Workers must be between 1 and 10")
         exit(1)
     
-    main(environment=args.env, duration=args.duration, workers_per_account=args.workers)
+    main(environment=args.env, duration=args.duration, workers_per_account=args.workers, target_event_id=args.event_id)

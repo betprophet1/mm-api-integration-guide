@@ -1,0 +1,113 @@
+[
+  {
+    "test": "Test 5: MM Massive Placement (100 wagers)",
+    "passed": true,
+    "message": "Successfully placed 100 wagers, balance unchanged",
+    "details": {
+      "wagers_placed": 100,
+      "failed": 0,
+      "placement_time": 4.765658855438232,
+      "rate_per_sec": 20.983457488965474,
+      "initial_balance": 998995.05,
+      "final_balance": 998995.05
+    },
+    "timestamp": "2026-01-12T20:38:09.229184"
+  },
+  {
+    "test": "Test 6: MM Massive Simultaneous Cancellation",
+    "passed": true,
+    "message": "Successfully cancelled 100 wagers, balance unchanged",
+    "details": {
+      "wagers_cancelled": 100,
+      "failed": 0,
+      "cancellation_time": 4.71439266204834,
+      "rate_per_sec": 21.211640007209613,
+      "initial_balance": 998995.05,
+      "final_balance": 998995.05
+    },
+    "timestamp": "2026-01-12T20:38:17.898311"
+  },
+  {
+    "test": "Test 5: MM Massive Placement (30 wagers)",
+    "passed": false,
+    "message": "Exception: 'NoneType' object is not iterable",
+    "details": {},
+    "timestamp": "2026-01-12T20:38:30.263066"
+  },
+  {
+    "test": "Test 6: MM Massive Simultaneous Cancellation",
+    "passed": false,
+    "message": "No wagers to cancel",
+    "details": {},
+    "timestamp": "2026-01-12T20:38:30.767841"
+  },
+  {
+    "test": "Test 5: MM Massive Placement (30 wagers)",
+    "passed": false,
+    "message": "Balance changed! Expected: $998995.05, Got: $998975.05",
+    "details": {},
+    "timestamp": "2026-01-12T20:38:43.251807"
+  },
+  {
+    "test": "Test 6: MM Massive Simultaneous Cancellation",
+    "passed": false,
+    "message": "No wagers to cancel",
+    "details": {},
+    "timestamp": "2026-01-12T20:38:43.755223"
+  },
+  {
+    "test": "Test 5: MM Massive Placement (30 wagers)",
+    "passed": false,
+    "message": "Exception: 'NoneType' object is not iterable",
+    "details": {},
+    "timestamp": "2026-01-12T20:38:54.793872"
+  },
+  {
+    "test": "Test 6: MM Massive Simultaneous Cancellation",
+    "passed": false,
+    "message": "No wagers to cancel",
+    "details": {},
+    "timestamp": "2026-01-12T20:38:55.299406"
+  },
+  {
+    "test": "Test 7: MM Stress Test (3 cycles)",
+    "passed": false,
+    "message": "Balance changed! Expected: $998995.05, Got: $998965.05",
+    "details": {},
+    "timestamp": "2026-01-12T20:38:57.046829"
+  },
+  {
+    "test": "Test 1: Basic DEDUCE Flow",
+    "passed": true,
+    "message": "Balance correctly unchanged on placement: $998965.05 -> $998965.05",
+    "details": {
+      "patron1_initial": 998965.05,
+      "patron1_after_place": 998965.05,
+      "wager_amount": 10.0
+    },
+    "timestamp": "2026-01-12T20:39:18.265331"
+  },
+  {
+    "test": "Test 2: Multiple Wagers Same Balance",
+    "passed": false,
+    "message": "Balance changed! Expected: $998965.05, Got: $998915.05",
+    "details": {},
+    "timestamp": "2026-01-12T20:39:45.887024"
+  },
+  {
+    "test": "Test 3: Cancel Before Match",
+    "passed": false,
+    "message": "Failed to cancel wager",
+    "details": {},
+    "timestamp": "2026-01-12T20:39:55.247381"
+  },
+  {
+    "test": "Test 4: Exposure Calculation (10x)",
+    "passed": true,
+    "message": "Balance retrieved successfully (exposure endpoint unavailable)",
+    "details": {
+      "balance": 998905.05
+    },
+    "timestamp": "2026-01-12T20:39:56.864402"
+  }
+]

@@ -1,0 +1,29 @@
+ARCHIVED UNUSED SCRIPTS
+================================================================================
+Archive Date: 2026-01-13 11:57:21
+Reason: Scripts not modified in 7+ days and not referenced by other files
+
+Total Files Archived: 20
+
+Files Archived:
+--------------------------------------------------------------------------------
+corrected_lec_gec_test.py                                    | Last modified: 2025-08-13 (152 days ago)
+daily_stress_test.py                                         | Last modified: 2025-10-06 (98 days ago)
+hybrid_sp_all_events.py                                      | Last modified: 2025-09-30 (104 days ago)
+integrated_mm_patron_matcher.py                              | Last modified: 2025-11-24 (50 days ago)
+multi_account_direct.py                                      | Last modified: 2025-09-30 (104 days ago)
+parallel_exposure_test.py                                    | Last modified: 2025-12-03 (40 days ago)
+raw_ws_listener.py                                           | Last modified: 2025-09-30 (105 days ago)
+replicate_postman_202.py                                     | Last modified: 2025-10-01 (103 days ago)
+run_all_tests.py                                             | Last modified: 2025-10-07 (97 days ago)
+run_exposure_test.py                                         | Last modified: 2025-07-29 (167 days ago)
+run_mm_and_patron.py                                         | Last modified: 2025-11-04 (70 days ago)
+sp_settlement_monitor.py                                     | Last modified: 2025-09-26 (108 days ago)
+src/auto_play_cancel.py                                      | Last modified: 2025-09-11 (123 days ago)
+src/main.py                                                  | Last modified: 2025-06-25 (201 days ago)
+src/main_multiaccounts.py                                    | Last modified: 2025-06-30 (196 days ago)
+test_both_accounts.py                                        | Last modified: 2025-07-29 (167 days ago)
+test_matching_timing_bug.py                                  | Last modified: 2025-11-14 (59 days ago)
+test_patron_matcher.py                                       | Last modified: 2025-11-04 (69 days ago)
+src/__init__.py                                              | Last modified: 2025-05-07 (250 days ago)
+src/exposure_test.py                                         | Last modified: 2025-07-29 (168 days ago)
