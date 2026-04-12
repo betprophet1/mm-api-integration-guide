@@ -8,10 +8,10 @@ Strategy: Each account bets BOTH sides of the same market to generate GEC.
   - 4 accounts doing this concurrently across many markets = deadlock potential
 
 Accounts (all have exposure enabled):
-  1. lam.tran+usr001@betprophet.co
-  2. lam.tran+usr002@betprophet.co
-  3. Exposure-MM1 (thanos_exposure_19300)
-  4. Exposure-MM2 (thanos_exposure_19301)
+  1. lam.tran+usr001@betprophet.co (patron)
+  2. lam.tran+usr002@betprophet.co (patron)
+  3. Exposure-MM1-19270 (thanos_exposure_19270@gmail.com)
+  4. Exposure-MM2-19271 (thanos_exposure_19271@gmail.com)
 
 Usage:
   python3 exposure-stress-test.py --event-id 30024944 --workers 20 --target 5000
@@ -65,14 +65,14 @@ ACCOUNTS = [
         "secret_key": "8c970658226e64c7346e753ed7377c48",
     },
     {
-        "name": "Exposure-MM1",
-        "access_key": "fd0a93b1215c35c67b692d09cd650f43",
-        "secret_key": "c006009cab7bb77f80e3b63c8842dfef",
+        "name": "Exposure-MM1-19270",
+        "access_key": "a58fb825b4a165e202eb9be999f52e39",
+        "secret_key": "b45edd218e76320ae57cd2011556e432",
     },
     {
-        "name": "Exposure-MM2",
-        "access_key": "c958baa4a0660946c2dfd877acdec4ab",
-        "secret_key": "9882c8ff7f6b97801c81527713d6870e",
+        "name": "Exposure-MM2-19271",
+        "access_key": "d126b05dea547ff34cd7bff2796b22ea",
+        "secret_key": "ea609c8ae92a81cd6ae51d2c93bb5aa2",
     },
 ]
 
@@ -142,6 +142,10 @@ class MMAccount:
             if resp.status_code == 200:
                 wager = resp.json().get("data", {}).get("wager", {})
                 return {"wager_id": wager.get("id"), "external_id": ext_id}
+            # Log non-200 errors for debugging
+            with stats_lock:
+                err_msg = f"{resp.status_code}: {resp.text[:200]}"
+                stats['errors'].append({"ts": time.time(), "account": self.name, "err": err_msg})
             # Token expired? Try refresh once
             if resp.status_code == 401:
                 if self.refresh_token():
@@ -276,8 +280,9 @@ def gec_worker(worker_id: int, account: MMAccount, pairs: list[dict],
             failed += 1
             continue  # skip side B if side A failed
 
-        # Bet side B: outcome 2, odds -100 (immediately after A to maximize GEC concurrency)
-        res_b = account.place_wager(pair["sel_b"]["line_id"], odds=-100, stake=stake)
+        # Bet side B: outcome 2, odds -110 (immediately after A to maximize GEC concurrency)
+        # Note: API rejects odds=-100 exactly; must be < -100 or >= 100
+        res_b = account.place_wager(pair["sel_b"]["line_id"], odds=-110, stake=stake)
         if res_b:
             with stats_lock:
                 stats['bets_placed'] += 1
