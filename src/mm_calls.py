@@ -243,9 +243,9 @@ class MMInteractions:
                                 logging.info(f"going to play on '{one_event['name']}' on moneyline, side {selection[0]['name']} with odds {odds_to_play}")
                                 body_to_send = {
                                     'external_id': external_id,
-                                    'line_id': selection[0]['line_id'],
-                                    'odds': odds_to_play,
-                                    'stake': 1.0
+                                    'strike_id': selection[0]['strike_id'],
+                                    'price': odds_to_play,
+                                    'quantity': 1.0
                                 }
                                 play_response = requests.post(play_url, json=body_to_send,
                                                              headers=self.__get_auth_header())
@@ -253,15 +253,18 @@ class MMInteractions:
                                     logging.info(f"failed to play, error {play_response.content}")
                                 else:
                                     logging.info("successfully")
-                                    self.wagers[external_id] = json.loads(play_response.content).get('data', {})['wager']['id']
+                                    resp_data = json.loads(play_response.content).get('data', {})
+                                    order_id = (resp_data.get('order') or {}).get('id')
+                                    if order_id:
+                                        self.wagers[external_id] = order_id
                                 # testing batch place wagers
                                 batch_n = 3
                                 external_id_batch = [str(uuid.uuid1()) for x in range(batch_n)]
                                 batch_body_to_send = [{
                                     'external_id': external_id_batch[x],
-                                    'line_id': selection[0]['line_id'],
-                                    'odds': odds_to_play,
-                                    'stake': 1.0
+                                    'strike_id': selection[0]['strike_id'],
+                                    'price': odds_to_play,
+                                    'quantity': 1.0
                                 } for x in range(batch_n)]
                                 batch_play_response = requests.post(batch_play_url, json={"data": batch_body_to_send},
                                                                     headers=self.__get_auth_header())
@@ -269,8 +272,12 @@ class MMInteractions:
                                     logging.info(f"failed to play, error {play_response.content}")
                                 else:
                                     logging.info("successfully")
-                                    for wager in batch_play_response.json()['data']['succeed_wagers']:
-                                        self.wagers[wager['external_id']] = wager['id']
+                                    resp_batch_data = batch_play_response.json().get('data', {})
+                                    # API renamed succeed_wagers -> succeed_orders
+                                    succeed = resp_batch_data.get('succeed_orders') or resp_batch_data.get('succeed_wagers', [])
+                                    for wager in succeed:
+                                        if wager.get('id'):
+                                            self.wagers[wager['external_id']] = wager['id']
 
     def cancel_all_wagers(self):
         """
@@ -287,7 +294,7 @@ class MMInteractions:
             if response.status_code == 404:
                 logging.info("already cancelled")
             else:
-                logging.info("failed to cancel")
+                logging.info(f"failed to cancel all, error {response.content}")
         else:
             logging.info("cancelled successfully")
             self.wagers = dict()
@@ -308,7 +315,7 @@ class MMInteractions:
                 logging.info("start to cancel wager")
                 body = {
                     'external_id': key,
-                    'wager_id': wager_id,
+                    'order_id': wager_id,
                 }
                 response = requests.post(cancel_url, json=body, headers=self.__get_auth_header())
                 if response.status_code != 200:
@@ -317,7 +324,7 @@ class MMInteractions:
                         if key in self.wagers:
                             self.wagers.pop(key)
                     else:
-                        logging.info("failed to cancel")
+                        logging.info(f"failed to cancel, error {response.content}")
                 else:
                     logging.info("cancelled successfully")
                     self.wagers.pop(key)
@@ -329,7 +336,7 @@ class MMInteractions:
         """
         wager_keys = list(self.wagers.keys())
         batch_keys_to_cancel = random.choices(wager_keys, k=min(4, len(wager_keys)))
-        batch_cancel_body = [{'wager_id': self.wagers[x],
+        batch_cancel_body = [{'order_id': self.wagers[x],
                               'external_id': x} for x in batch_keys_to_cancel]
         batch_cancel_url = urljoin(self.base_url, config.URL['mm_batch_cancel'])
         response = requests.post(batch_cancel_url, json={'data': batch_cancel_body}, headers=self.__get_auth_header())
@@ -338,7 +345,7 @@ class MMInteractions:
                 logging.info("already cancelled")
                 [self.wagers.pop(x) for x in batch_keys_to_cancel]
             else:
-                logging.info("failed to cancel")
+                logging.info(f"failed to batch cancel, error {response.content}")
         else:
             logging.info("cancelled successfully")
             for key in batch_keys_to_cancel:
