@@ -167,7 +167,7 @@ class MMInteractions:
         auth_headers = {
                            "Authorization": auth_header['Authorization'],
                            "header-subscriptions": '''[{"type":"tournament","ids":[]}]''',
-                       }
+                       }    
         self.pusher = pysher.Pusher(key=key, cluster=cluster,
                                     auth_endpoint=auth_endpoint_url,
                                     auth_endpoint_headers=auth_headers)
