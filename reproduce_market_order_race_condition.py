@@ -20,6 +20,7 @@ Strategy:
 """
 
 import argparse
+import sys
 import time
 import threading
 import requests
@@ -54,7 +55,7 @@ DEDUCE_USER_UUID = '279cc6a1-d926-4273-a18a-782eccfbce7b'  # Exclude from liquid
 TARGET_EVENT_ID = 20023066  # Default event ID, can be overridden by --event-id
 
 
-def load_patron_account(environment='sandbox'):
+def load_patron_account(environment='qa'):
     """Load patron account for Market Order placement using web authentication"""
     import os
     
@@ -78,7 +79,7 @@ def load_patron_account(environment='sandbox'):
         return None
     
     # Login using web authentication
-    base_url = config.ENVIRONMENT_URLS.get(environment, config.ENVIRONMENT_URLS['sandbox'])
+    base_url = config.ENVIRONMENT_URLS.get(environment, config.ENVIRONMENT_URLS['qa'])
     login_url = urljoin(base_url, 'api/v1/auth/login')
     device_id = str(uuid.uuid1())
     
@@ -155,7 +156,7 @@ def load_patron_account(environment='sandbox'):
         return None
 
 
-def load_liquidity_providers(environment='sandbox', num_accounts=5):
+def load_liquidity_providers(environment='qa', num_accounts=5):
     """Load MM accounts for liquidity provision, excluding deduce user"""
     import os
     import importlib
@@ -287,18 +288,45 @@ def provide_liquidity_continuously(mm_instances, target_event_id, duration_secon
     
     logging.info(f"✅ Found event: {target_event.get('name', 'Unknown')}")
     
-    # Collect all line_ids from the event
+    # Collect line_ids by fetching markets FRESH via get_multiple_markets. The
+    # cached mm_instance.sport_events structure omits line_ids for some events
+    # (e.g. those exposing lines under `market_lines` rather than `selections`),
+    # which made this no-op (0 line_ids → 0 liquidity → 0 market orders). This
+    # mirrors exposure-stress's working extraction and handles both shapes.
     line_ids = []
-    for market in target_event.get('markets', []):
-        for selection_group in market.get('selections', []):
-            if isinstance(selection_group, list):
-                for selection in selection_group:
-                    if selection.get('line_id'):
-                        line_ids.append({
-                            'line_id': selection['line_id'],
-                            'market_type': market.get('type'),
-                            'selection_name': selection.get('name', 'Unknown')
-                        })
+    def _add_sel(sel, mtype):
+        if isinstance(sel, dict) and sel.get('line_id'):
+            line_ids.append({
+                'line_id': sel['line_id'],
+                'market_type': mtype,
+                'selection_name': sel.get('name', 'Unknown'),
+            })
+    try:
+        _tok = list(mm_instances.values())[0].mm_session.get('access_token', '')
+        _resp = requests.get(
+            f"{config.BASE_URL}/partner/mm/get_multiple_markets",
+            params={"event_ids": str(target_event_id)},
+            headers={"Authorization": f"Bearer {_tok}"}, timeout=15)
+        _data = _resp.json().get('data', {}) if _resp.status_code == 200 else {}
+    except Exception as _e:
+        logging.error(f"get_multiple_markets fetch failed: {_e}")
+        _data = {}
+    for _eid, _markets in _data.items():
+        for market in _markets:
+            mtype = market.get('type', 'unknown')
+            for group in (market.get('selections') or []):
+                if isinstance(group, list):
+                    for sel in group:
+                        _add_sel(sel, mtype)
+                else:
+                    _add_sel(group, mtype)
+            for ml in (market.get('market_lines') or []):
+                for group in (ml.get('selections') or []):
+                    if isinstance(group, list):
+                        for sel in group:
+                            _add_sel(sel, mtype)
+                    else:
+                        _add_sel(group, mtype)
     
     logging.info(f"✅ Collected {len(line_ids)} line_ids from event")
     logging.info(f"   Markets: {len(set(l['market_type'] for l in line_ids))} unique market types\n")
@@ -409,7 +437,18 @@ def place_market_order(patron, line_id, stake, expected_avg_odds, odds_list, exp
         
         if response.status_code == 200:
             data = response.json().get('data', {})
-            wager_id = data.get('wagerId')
+            # The response carries refId (uuid) and id (int) — there is NO
+            # 'wagerId' field. Reading a key that does not exist made wager_id
+            # always None, so the caller's `if success and wager_id:` never fired:
+            # market_orders_placed stayed 0 and every run was reported as a
+            # "0 market orders — no-op" INCONCLUSIVE, for weeks, while orders were
+            # in fact being placed successfully (verified 2026-08-12: the patron
+            # balance moved and a POTENTIAL RACE CONDITION warning fired during a
+            # run that still reported 0). It also meant cancel_market_order() was
+            # called with None, so the cancel-race half never ran either.
+            #   {"success":true,"data":{"id":38892,"refId":"5c41dbf7-…",
+            #    "lineID":"…","status":"pending",…}}
+            wager_id = data.get('refId') or data.get('id') or data.get('wagerId')
             status = data.get('status', 'unknown')
             
             logging.info(f"✅ Market Order placed: ID={wager_id}, Status={status}, Elapsed={elapsed:.2f}s")
@@ -587,18 +626,45 @@ def run_market_order_stress_test(patron, mm_instances, target_event_id, duration
     
     logging.info(f"✅ Found event: {target_event.get('name', 'Unknown')}")
     
-    # Collect all line_ids from the event
+    # Collect line_ids by fetching markets FRESH via get_multiple_markets. The
+    # cached mm_instance.sport_events structure omits line_ids for some events
+    # (e.g. those exposing lines under `market_lines` rather than `selections`),
+    # which made this no-op (0 line_ids → 0 liquidity → 0 market orders). This
+    # mirrors exposure-stress's working extraction and handles both shapes.
     line_ids = []
-    for market in target_event.get('markets', []):
-        for selection_group in market.get('selections', []):
-            if isinstance(selection_group, list):
-                for selection in selection_group:
-                    if selection.get('line_id'):
-                        line_ids.append({
-                            'line_id': selection['line_id'],
-                            'market_type': market.get('type'),
-                            'selection_name': selection.get('name', 'Unknown')
-                        })
+    def _add_sel(sel, mtype):
+        if isinstance(sel, dict) and sel.get('line_id'):
+            line_ids.append({
+                'line_id': sel['line_id'],
+                'market_type': mtype,
+                'selection_name': sel.get('name', 'Unknown'),
+            })
+    try:
+        _tok = list(mm_instances.values())[0].mm_session.get('access_token', '')
+        _resp = requests.get(
+            f"{config.BASE_URL}/partner/mm/get_multiple_markets",
+            params={"event_ids": str(target_event_id)},
+            headers={"Authorization": f"Bearer {_tok}"}, timeout=15)
+        _data = _resp.json().get('data', {}) if _resp.status_code == 200 else {}
+    except Exception as _e:
+        logging.error(f"get_multiple_markets fetch failed: {_e}")
+        _data = {}
+    for _eid, _markets in _data.items():
+        for market in _markets:
+            mtype = market.get('type', 'unknown')
+            for group in (market.get('selections') or []):
+                if isinstance(group, list):
+                    for sel in group:
+                        _add_sel(sel, mtype)
+                else:
+                    _add_sel(group, mtype)
+            for ml in (market.get('market_lines') or []):
+                for group in (ml.get('selections') or []):
+                    if isinstance(group, list):
+                        for sel in group:
+                            _add_sel(sel, mtype)
+                    else:
+                        _add_sel(group, mtype)
     
     logging.info(f"✅ Collected {len(line_ids)} line_ids from event")
     logging.info(f"   Markets: {len(set(l['market_type'] for l in line_ids))} unique market types\n")
@@ -606,7 +672,46 @@ def run_market_order_stress_test(patron, mm_instances, target_event_id, duration
     if not line_ids:
         logging.error("❌ No line_ids found in event!")
         return
-    
+
+    # Keep only lines that can actually FILL a market order.
+    #
+    # market_order_worker picks a line at random, calls estimate-odds, and on a
+    # None/zero result just sleeps and retries. If most lines have no fillable
+    # book that loop spins for the whole duration and places nothing — which is
+    # exactly the "0 market orders placed — test was a no-op" this phase has
+    # produced for weeks. A line being LIVE is not the same as a line having
+    # LIQUIDITY: a market order consumes resting size on the book, so a perfectly
+    # live line can have nothing to fill against.
+    #
+    # Measured on sandbox 2026-08-12: 8 of 8 lines sampled from a discovered event
+    # had availableStake = 0. Filtering up front turns a silent 20-minute no-op
+    # into either a real run or an immediate, explicit precondition failure.
+    # Same gate as prophet-api-automation globalSetup (QA-236, 2026-08-12).
+    MO_PROBE_STAKE = 10.0
+    logging.info(f"🔍 Probing {len(line_ids)} line(s) for market-order liquidity "
+                 f"(need >= ${MO_PROBE_STAKE:.0f} fillable)...")
+    liquid_lines = []
+    for ld in line_ids:
+        try:
+            max_stake, avg_odds, odds_list = get_estimate_odds(patron, ld['line_id'], MO_PROBE_STAKE)
+        except Exception:
+            max_stake, avg_odds, odds_list = None, None, None
+        if max_stake and max_stake >= MO_PROBE_STAKE and avg_odds and odds_list:
+            liquid_lines.append(ld)
+
+    logging.info(f"✅ {len(liquid_lines)}/{len(line_ids)} line(s) have fillable liquidity")
+
+    if not liquid_lines:
+        logging.error(f"❌ PRECONDITION FAILED: no line on this event can fill a "
+                      f"${MO_PROBE_STAKE:.0f} market order.")
+        logging.error("   Every order would be skipped and this would report a 0-order "
+                      "no-op after burning the full duration.")
+        logging.error("   Need an event with resting size on the book (an MM actively "
+                      "quoting), or run this alongside the stability traffic.")
+        return
+
+    line_ids = liquid_lines
+
     # Run market order workers (patron account)
     # Spawn multiple workers for increased stress
     with ThreadPoolExecutor(max_workers=patron_workers) as executor:
@@ -674,7 +779,7 @@ def print_final_report():
     logging.info("="*70 + "\n")
 
 
-def main(environment='sandbox', duration=300, workers_per_account=5, target_event_id=None):
+def main(environment='qa', duration=300, workers_per_account=5, target_event_id=None):
     """Main function to run the race condition reproducer"""
     # Use provided event_id or default
     event_id = target_event_id if target_event_id else TARGET_EVENT_ID
@@ -723,15 +828,23 @@ def main(environment='sandbox', duration=300, workers_per_account=5, target_even
     
     # Wait for liquidity thread to finish
     liquidity_thread.join(timeout=30)
-    
+
     # Print final report
     print_final_report()
+
+    # A run that placed zero market orders exercised nothing (e.g. target event
+    # not in the seeded tournaments) — fail loudly instead of a silent green.
+    if stats['market_orders_placed'] == 0:
+        logging.error("❌ NO-OP RUN: 0 market orders placed — treat as FAIL")
+        sys.exit(2)
+    if stats['potential_race_conditions'] > 0:
+        sys.exit(1)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Reproduce Market Order race condition bug')
-    parser.add_argument('--env', type=str, default='sandbox', choices=['sandbox', 'staging'],
-                       help='Environment (default: sandbox)')
+    parser.add_argument('--env', type=str, default='qa', choices=['qa', 'sandbox', 'staging'],
+                       help='Environment (default: qa)')
     parser.add_argument('--duration', type=int, default=300,
                        help='Test duration in seconds (default: 300 = 5 minutes)')
     parser.add_argument('--workers', type=int, default=5,
