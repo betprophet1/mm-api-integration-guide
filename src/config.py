@@ -12,12 +12,13 @@ MM_KEYS = {
 
 TOURNAMENTS_INTERESTED = user_info_dict['tournaments']
 
-BASE_URL = 'https://api-ss-qa.betprophet.co'
+BASE_URL = 'https://sandbox.prophetx.dev'
 URL = {
     'mm_login': 'partner/auth/login',
     'mm_refresh': 'partner/auth/refresh',
     'mm_ping': 'partner/mm/pusher/ping',
-    'mm_auth': 'partner/v4/mm/pusher',
+    'mm_auth': 'partner/mm/pusher',
+    'mm_auth_v4': 'partner/v4/mm/websocket',
     'mm_tournaments': 'partner/mm/get_tournaments',
     'mm_events': 'partner/mm/get_sport_events',
     'mm_markets': 'partner/v4/mm/get_markets',

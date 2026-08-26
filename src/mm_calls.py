@@ -114,18 +114,30 @@ class MMInteractions:
 
     def _get_channels(self, socket_id: float):
         """
-        Get a list of all channels and topics of each channel that you are allowing to subscribe to.
-        Even though there are public and private channels, but the channel id is unique for each API user.
+        Register the complete set of channels we want (declarative, not additive - see
+        https://betprophet.atlassian.net/wiki/spaces/BETPROPHET/pages/1572339719)
+        and get back the list of authorized channels with their own per-channel auth.
         """
-        auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
+        auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth_v4'])
+        event_ids = [str(event_id) for event_id in self.sport_events.keys()]
         channels_response = requests.post(auth_endpoint_url,
-                                          data={'socket_id': socket_id},
+                                          json={
+                                              'socket_id': socket_id,
+                                              'service': 'pusher',
+                                              'subscriptions': [
+                                                  {"type": "tournament", "ids": []},
+                                                  {"type": "event", "ids": event_ids},
+                                              ]
+                                            },
                                           headers=self.__get_auth_header())
         if channels_response.status_code != 200:
             logging.error("failed to get channels")
             raise Exception("failed to get channels")
-        channels = channels_response.json()
-        return channels.get('data', {}).get('authorized_channel', [])
+        channels = channels_response.json().get('data', {})
+        rejected = channels.get('rejected', [])
+        if rejected:
+            logging.warning(f"some channel subscriptions were rejected: {rejected}")
+        return channels.get('authorized_channel', [])
 
     def _get_connection_config(self):
         """
@@ -144,6 +156,7 @@ class MMInteractions:
         """
         connection_config_url = urljoin(self.base_url, config.URL['websocket_config'])
         connection_response = requests.get(connection_config_url, headers=self.__get_auth_header())
+        print(connection_response.json())
         if connection_response.status_code != 200:
             logging.error("failed to get connection configs")
             raise Exception("failed to get channels")
@@ -161,16 +174,7 @@ class MMInteractions:
         connection_config = self._get_connection_config()  # not working yet, getting wrong config
         key = connection_config['key']
         cluster = connection_config['cluster']
-        
-        auth_endpoint_url = urljoin(self.base_url, config.URL['mm_auth'])
-        auth_header = self.__get_auth_header()
-        auth_headers = {
-                           "Authorization": auth_header['Authorization'],
-                           "header-subscriptions": '''[{"type":"tournament","ids":[]}]''',
-                       }    
-        self.pusher = pysher.Pusher(key=key, cluster=cluster,
-                                    auth_endpoint=auth_endpoint_url,
-                                    auth_endpoint_headers=auth_headers)
+        self.pusher = pysher.Pusher(key=key, cluster=cluster)
 
         def public_event_handler(*args, **kwargs):
             print("processing public, Args:", args)
@@ -187,25 +191,18 @@ class MMInteractions:
         def connect_handler(data):
             socket_id = json.loads(data)['socket_id']
             available_channels = self._get_channels(socket_id)
-            broadcast_channel_name = None
-            private_channel_name = None
-            private_events = None
             for channel in available_channels:
-                if 'broadcast' in channel['channel_name']:
-                    broadcast_channel_name = channel['channel_name']
-                else:
-                    private_channel_name = channel['channel_name']
-                    private_events = channel['binding_events']
-            broadcast_channel = self.pusher.subscribe(broadcast_channel_name)
-            private_channel = self.pusher.subscribe(private_channel_name)
-            for t_id in self.my_tournaments:
-                event_name = f'tournament_{t_id}'
-                broadcast_channel.bind(event_name, public_event_handler)
-                logging.info(f"subscribed to public channel, event name: {event_name}, successfully")
-
-            for private_event in private_events:
-                private_channel.bind(private_event['name'], private_event_handler)
-                logging.info(f"subscribed to private channel, event name: {private_event['name']}, successfully")
+                channel_name = channel['channel_name']
+                scope = channel.get('scope')
+                # classify by scope, not name - event/subtype channel names also contain
+                # "broadcast", so a name-based check misfiles them as the main public channel
+                is_private = scope is None and 'user=' in channel_name
+                handler = private_event_handler if is_private else public_event_handler
+                pusher_channel = self.pusher.subscribe(channel_name, auth=channel['auth'])
+                for binding_event in channel['binding_events']:
+                    pusher_channel.bind(binding_event['name'], handler)
+                    logging.info(f"subscribed to channel {channel_name} (scope={scope}), "
+                                 f"event name: {binding_event['name']}, successfully")
 
         self.pusher.connection.bind('pusher:connection_established', connect_handler)
         self.pusher.connect()
@@ -213,6 +210,7 @@ class MMInteractions:
     def get_balance(self):
         balance_url = urljoin(self.base_url, config.URL['mm_balance'])
         response = requests.get(balance_url, headers=self.__get_auth_header())
+        print(response.json(), response.status_code)
         if response.status_code != 200:
             logging.error("failed to get balance")
             return
