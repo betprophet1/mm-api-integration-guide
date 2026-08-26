@@ -109,7 +109,10 @@ def get_market_for_event(framework, account_name, event_id):
             logging.error(f"No markets available for event {event_id}")
             return None
         
-        # Find first market with selections
+        # Collect every market with a valid line_id, then pick one at random --
+        # markets come back in a fixed order (moneyline first), so always
+        # returning the first hit meant every run tested the same market type.
+        candidates = []
         for market in event_markets:
             if market.get('selections'):
                 selections = market.get('selections', [])
@@ -120,15 +123,18 @@ def get_market_for_event(framework, account_name, event_id):
                             line_id = selections[0][0].get('line_id')
                         elif isinstance(selections[0], dict):
                             line_id = selections[0].get('line_id')
-                        
+
                         if line_id:
-                            event_name = market.get('event_name', 'Unknown')
-                            return {'line_id': line_id, 'event': {'name': event_name, 'event_id': event_id}}
+                            candidates.append((line_id, market.get('event_name', 'Unknown')))
                     except:
                         continue
-        
-        logging.error(f"Could not find valid line_id in event {event_id}")
-        return None
+
+        if not candidates:
+            logging.error(f"Could not find valid line_id in event {event_id}")
+            return None
+
+        line_id, event_name = random.choice(candidates)
+        return {'line_id': line_id, 'event': {'name': event_name, 'event_id': event_id}}
     except Exception as e:
         logging.error(f"Error getting market for event {event_id}: {e}")
         return None
@@ -455,7 +461,7 @@ def test_four_way_mexican_standoff(duration=30, event_id=None):
     accounts['patron_deduce'] = {'type': 'patron', 'behavior': 'deduce', 'side': 'back', 'odds': 150}
     
     # Patron non-deduce
-    patron_config = config.load_user_config(f'user_info_patron_{config.ENVIRONMENT}.json')
+    patron_config = config.load_env_account_config(config.ENVIRONMENT, 'patron.json', f'user_info_patron_{config.ENVIRONMENT}.json')
     patron_nondeduce_creds = {'username': patron_config['email'], 'password': patron_config['password']}
     framework.login_account('patron_nondeduce', patron_nondeduce_creds, account_type='patron')
     accounts['patron_nondeduce'] = {'type': 'patron', 'behavior': 'normal', 'side': 'lay', 'odds': -150}
@@ -864,7 +870,7 @@ def test_simultaneous_burst(event_id=None):
     framework.login_account('patron_deduce', patron_deduce_creds, account_type='patron')
     accounts['patron_deduce'] = {'odds': 150, 'behavior': 'deduce'}
     
-    patron_config = config.load_user_config(f'user_info_patron_{config.ENVIRONMENT}.json')
+    patron_config = config.load_env_account_config(config.ENVIRONMENT, 'patron.json', f'user_info_patron_{config.ENVIRONMENT}.json')
     patron_nondeduce_creds = {'username': patron_config['email'], 'password': patron_config['password']}
     framework.login_account('patron_nondeduce', patron_nondeduce_creds, account_type='patron')
     accounts['patron_nondeduce'] = {'odds': -150, 'behavior': 'normal'}
@@ -1040,7 +1046,7 @@ def test_deduce_accounts_get_matched(duration=30, event_id=None):
     framework.login_account('mm2', mm2_creds, account_type='mm')
     accounts['mm2'] = {'type': 'mm', 'behavior': 'normal', 'role': 'taker', 'odds': -150}
     
-    patron_config = config.load_user_config(f'user_info_patron_{config.ENVIRONMENT}.json')
+    patron_config = config.load_env_account_config(config.ENVIRONMENT, 'patron.json', f'user_info_patron_{config.ENVIRONMENT}.json')
     patron_nondeduce_creds = {'username': patron_config['email'], 'password': patron_config['password']}
     framework.login_account('patron_nondeduce', patron_nondeduce_creds, account_type='patron')
     accounts['patron_nondeduce'] = {'type': 'patron', 'behavior': 'normal', 'role': 'taker', 'odds': -150}
@@ -1481,7 +1487,7 @@ def test_patron_matches_mm_wagers(duration=30, event_id=None, aggression=1.0):
     framework.login_account('patron_deduce', patron_deduce_creds, account_type='patron')
     accounts['patron_deduce'] = {'type': 'patron', 'behavior': 'deduce', 'role': 'taker', 'odds': -150}
     
-    patron_config = config.load_user_config(f'user_info_patron_{config.ENVIRONMENT}.json')
+    patron_config = config.load_env_account_config(config.ENVIRONMENT, 'patron.json', f'user_info_patron_{config.ENVIRONMENT}.json')
     patron_nondeduce_creds = {'username': patron_config['email'], 'password': patron_config['password']}
     framework.login_account('patron_nondeduce', patron_nondeduce_creds, account_type='patron')
     accounts['patron_nondeduce'] = {'type': 'patron', 'behavior': 'normal', 'role': 'taker', 'odds': -150}
@@ -1999,7 +2005,7 @@ def test_cancel_race_wager_job_bug(duration=30, cancel_rate=0.5, event_id=None, 
     framework.login_account('patron_deduce', patron_deduce_creds, account_type='patron')
     print(f"{Colors.GREEN}✅ Patron deduce (matcher 1) logged in{Colors.RESET}")
     
-    patron_config = config.load_user_config(f'user_info_patron_{config.ENVIRONMENT}.json')
+    patron_config = config.load_env_account_config(config.ENVIRONMENT, 'patron.json', f'user_info_patron_{config.ENVIRONMENT}.json')
     patron_nondeduce_creds = {'username': patron_config['email'], 'password': patron_config['password']}
     framework.login_account('patron_nondeduce', patron_nondeduce_creds, account_type='patron')
     print(f"{Colors.GREEN}✅ Patron non-deduce (matcher 2) logged in{Colors.RESET}\n")
@@ -2623,7 +2629,7 @@ def test_aggressive_all_lines(duration=60, event_id=None):
     framework.login_account('patron_deduce', patron_deduce_creds, account_type='patron')
     accounts['patron_deduce'] = {'type': 'patron', 'behavior': 'deduce'}
     
-    patron_config = config.load_user_config(f'user_info_patron_{config.ENVIRONMENT}.json')
+    patron_config = config.load_env_account_config(config.ENVIRONMENT, 'patron.json', f'user_info_patron_{config.ENVIRONMENT}.json')
     patron_nondeduce_creds = {'username': patron_config['email'], 'password': patron_config['password']}
     framework.login_account('patron_nondeduce', patron_nondeduce_creds, account_type='patron')
     accounts['patron_nondeduce'] = {'type': 'patron', 'behavior': 'normal'}
@@ -3237,7 +3243,7 @@ def test_flexible_cancel_race(duration=30, cancel_rate=0.5, event_id=None, use_d
     
     # Patron non-deduce - only if use_patron
     if use_patron:
-        patron_config = config.load_user_config(f'user_info_patron_{config.ENVIRONMENT}.json')
+        patron_config = config.load_env_account_config(config.ENVIRONMENT, 'patron.json', f'user_info_patron_{config.ENVIRONMENT}.json')
         patron_nondeduce_creds = {'username': patron_config['email'], 'password': patron_config['password']}
         framework.login_account('patron_nondeduce', patron_nondeduce_creds, account_type='patron')
         accounts['patron_nondeduce'] = {'type': 'patron', 'behavior': 'normal'}

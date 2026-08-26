@@ -7,6 +7,7 @@ Tests the deferred deduction model: money deducted only when wager is matched
 import time
 import json
 import uuid
+import random
 import requests
 from urllib.parse import urljoin
 from datetime import datetime
@@ -66,12 +67,21 @@ class DeduceTestFramework:
                 'content-type': 'application/json',
                 'x-currency': 'cash'
             }
-            request_body = {
+            base_body = {
                 'email': credentials.get('email', credentials.get('username')),
                 'password': credentials['password'],
-                'device_id': str(uuid.uuid1())
             }
-            response = requests.post(login_url, json=request_body, headers=headers)
+            # Whether an account has 2FA enabled isn't knowable ahead of login, so try
+            # without an OTP code first, and only fall back to the platform-wide
+            # test-account OTP bypass ('123456') if that attempt fails. Confirmed live:
+            # an account with a pending 2FA challenge fails hard (non-200) without a
+            # code and succeeds once it's included; an account with none succeeds on
+            # the first attempt and never reaches the retry, so this never sends a
+            # code to an account that doesn't expect one (which 404s as otp_invalid).
+            response = requests.post(login_url, json={**base_body, 'device_id': str(uuid.uuid1())}, headers=headers)
+            if response.status_code != 200:
+                response = requests.post(
+                    login_url, json={**base_body, 'device_id': str(uuid.uuid1()), 'code': '123456'}, headers=headers)
         
         if response.status_code != 200:
             raise Exception(f"Login failed for {account_name} ({account_type}): {response.content}")
@@ -172,7 +182,7 @@ class DeduceTestFramework:
                 exposure_data = json.loads(response.content).get('data', {})
                 return exposure_data
             else:
-                logging.warning(f"Could not get exposure for {account_name}: {response.status_code}")
+                logging.warning(f"Could not get exposure for {account_name}: {response.status_code} {response.content.decode('utf-8', 'replace')}")
                 return {}
         except Exception as e:
             logging.warning(f"Exposure endpoint not available: {e}")
@@ -221,25 +231,26 @@ class DeduceTestFramework:
                 
                 if response.status_code == 200:
                     response_data = json.loads(response.content)
-                    # Patron API returns data in 'wagers' field
-                    matched_bets = response_data.get('data', {}).get('wagers', [])
+                    # Patron API returns data as either {'wagers': [...]} or a bare list
+                    data = response_data.get('data', {})
+                    matched_bets = data.get('wagers', []) if isinstance(data, dict) else data
                     logging.info(f"{Colors.CYAN}📊 {account_name} has {len(matched_bets)} matched bets{Colors.RESET}")
                     return matched_bets
                 else:
-                    logging.warning(f"Could not get matched bets for {account_name}: {response.status_code}")
+                    logging.warning(f"Could not get matched bets for {account_name}: {response.status_code} {response.content.decode('utf-8', 'replace')}")
                     return []
             else:
                 # MM accounts use MM API endpoint
                 matched_bets_url = urljoin(self.base_url, config.URL.get('mm_get_matched_bets', 'partner/mm/get_matched_bets'))
                 params = {'limit': limit, 'offset': offset}
                 response = requests.get(matched_bets_url, params=params, headers=self.get_auth_header(account_name))
-                
+
                 if response.status_code == 200:
                     matched_bets = json.loads(response.content).get('data', {}).get('matched_bets', [])
                     logging.info(f"{Colors.CYAN}📊 {account_name} has {len(matched_bets)} matched bets{Colors.RESET}")
                     return matched_bets
                 else:
-                    logging.warning(f"Could not get matched bets for {account_name}: {response.status_code}")
+                    logging.warning(f"Could not get matched bets for {account_name}: {response.status_code} {response.content.decode('utf-8', 'replace')}")
                     return []
         except Exception as e:
             logging.warning(f"Matched bets endpoint error for {account_name}: {e}")
@@ -398,7 +409,7 @@ class DeduceTestFramework:
         # Accept both 200 and 201 status codes
         if response.status_code not in [200, 201]:
             error_msg = response.content.decode('utf-8')
-            logging.error(f"{Colors.RED}✗ Failed to place wager for {account_name}: {error_msg}{Colors.RESET}")
+            logging.error(f"{Colors.RED}✗ Failed to place wager for {account_name} (HTTP {response.status_code}): {error_msg or '<empty body>'}{Colors.RESET}")
             return {'success': False, 'error': error_msg, 'external_id': external_id}
         
         # Parse response based on account type
@@ -439,7 +450,98 @@ class DeduceTestFramework:
         else:
             logging.error(f"{Colors.RED}✗ Failed to cancel wager: {response.content}{Colors.RESET}")
             return False
-    
+
+    def cancel_all_wagers(self, account_name: str) -> dict:
+        """MM panic-button endpoint: cancels every open wager for the account, no wager id needed.
+
+        Unlike cancel_wager (single wager), the backend's bulk cancel-all path
+        (CancelWagersByUserId) does not check matching_stake_ongoing before
+        cancelling -- only the single-wager cancel path does. So calling this
+        while one of the account's wagers has an in-flight deduct job (mid-match)
+        is the SSE-2441 scenario that needs to revert/refund correctly on the
+        backend; this method exists to let a caller race that window.
+
+        Returns {'success', 'status_code', 'error_text'} (not just a bool) so a
+        caller can classify a failure -- e.g. via test_backend_fairness.py's
+        _classify_cancel_error -- instead of only counting pass/fail.
+        """
+        cancel_all_url = urljoin(self.base_url, config.URL['mm_cancel_all_wagers'])
+        response = requests.post(cancel_all_url, json={}, headers=self.get_auth_header(account_name))
+
+        if response.status_code == 200:
+            logging.info(f"{Colors.GREEN}✓ {account_name} cancel-all succeeded{Colors.RESET}")
+            return {'success': True, 'status_code': response.status_code, 'error_text': ''}
+
+        error_text = response.content.decode('utf-8', 'replace')
+        logging.warning(f"{Colors.YELLOW}cancel-all failed for {account_name}: "
+                         f"{response.status_code} {error_text}{Colors.RESET}")
+        return {'success': False, 'status_code': response.status_code, 'error_text': error_text}
+
+    def get_market_order_estimate(self, account_name: str, line_id: str, stake: float) -> dict:
+        """Estimate fillable size/odds for a market order before placing it (patron-only, web API).
+
+        Returns {'max_stake_size', 'expected_average_odds', 'odds_list'}. A
+        market order placed above max_stake_size against a thin book won't
+        fully match -- callers should clamp stake to this first.
+        """
+        estimate_url = urljoin(self.base_url, 'trade/private/api/v1/market-orders/estimate-odds')
+        headers = self.get_auth_header(account_name)
+        headers['__source'] = 'web'
+        body = {'lineId': line_id, 'stake': stake}
+
+        response = requests.post(estimate_url, json=body, headers=headers)
+        if response.status_code != 200:
+            logging.warning(f"{Colors.YELLOW}market order estimate-odds failed for {account_name}: "
+                             f"{response.status_code} {response.content.decode('utf-8', 'replace')}{Colors.RESET}")
+            return {'max_stake_size': 0, 'expected_average_odds': 0, 'odds_list': []}
+
+        data = response.json().get('data', {})
+        return {
+            'max_stake_size': data.get('maxStakeSize', 0),
+            'expected_average_odds': data.get('expectedAverageOdds', 0),
+            'odds_list': data.get('oddsList', []),
+        }
+
+    def place_market_order(self, account_name: str, line_id: str, stake: float,
+                            expected_avg_odds, odds_list) -> dict:
+        """Place a market order (patron-only, web API): sweeps resting liquidity on
+        line_id at expected_avg_odds up to stake. expected_avg_odds/odds_list
+        should come from a prior get_market_order_estimate call so the order is
+        actually matchable rather than sized against a stale/empty book.
+
+        This is a genuinely different wager type from place_wager's limit
+        orders: market order cancel/refund goes through CreateMarketOrderRefundJob
+        (ss-trade-app), not the generic wager-cancel path -- calculateCancelWagerRefundAmount
+        returns 0 for market-order-tagged wagers specifically, so cancel_all_wagers's
+        refund accounting (what this script otherwise exercises) never applies to these;
+        their own known race is the order matching right at its ~5s auto-cancel timeout
+        (see reproduce_market_order_race_condition.py).
+        """
+        mo_url = urljoin(self.base_url, 'trade/private/api/v1/market-orders')
+        headers = self.get_auth_header(account_name)
+        headers['__source'] = 'web'
+        body = {
+            'lineID': line_id,
+            'expectedAverageOdds': expected_avg_odds,
+            'oddsList': odds_list,
+            'stake': stake,
+        }
+
+        response = requests.post(mo_url, json=body, headers=headers)
+        if response.status_code != 200:
+            error_msg = response.content.decode('utf-8', 'replace')
+            logging.error(f"{Colors.RED}✗ Failed to place market order for {account_name}: {error_msg}{Colors.RESET}")
+            return {'success': False, 'error': error_msg}
+
+        data = response.json().get('data', {})
+        # Response carries refId (uuid) + id (int) -- there is no 'wagerId' field.
+        # reproduce_market_order_race_condition.py hit a real bug reading a
+        # nonexistent key here: wager_id silently stayed None and every
+        # downstream match/cancel check on it was a no-op for weeks.
+        wager_id = data.get('refId') or data.get('id')
+        logging.info(f"{Colors.GREEN}✓ {account_name} placed market order: ${stake} (ID: {wager_id}){Colors.RESET}")
+        return {'success': True, 'wager_id': wager_id, 'status': data.get('status', 'unknown'), 'data': data}
+
     def get_available_market(self, account_name: str) -> Optional[dict]:
         """Get an available market for testing.
         - If env var TARGET_EVENT_ID is set, try to fetch a market for that event first.
@@ -457,7 +559,7 @@ class DeduceTestFramework:
                 )
                 if markets_response.status_code == 200:
                     markets_data = json.loads(markets_response.content).get('data', {})
-                    event_markets = markets_data.get(str(target_event_id), [])
+                    event_markets = markets_data.get(str(target_event_id)) or []
                     for market in event_markets:
                         selections = market.get('selections', [])
                         if selections:
@@ -536,9 +638,13 @@ class DeduceTestFramework:
                     
                     if markets_response.status_code == 200:
                         markets_data = json.loads(markets_response.content).get('data', {})
-                        event_markets = markets_data.get(str(event['event_id']), [])
+                        event_markets = markets_data.get(str(event['event_id'])) or []
                         
-                        # Find ANY market with selections (not just moneyline)
+                        # Collect every market with a valid line_id, then pick one at
+                        # random -- markets come back in a fixed order (moneyline
+                        # first), so always returning the first hit meant every run
+                        # tested the same market type despite more being available.
+                        candidates = []
                         for market in event_markets:
                             if market.get('selections'):
                                 selections = market.get('selections', [])
@@ -551,18 +657,22 @@ class DeduceTestFramework:
                                             line_id = selections[0].get('line_id')
                                         else:
                                             continue
-                                        
+
                                         if line_id:
-                                            logging.info(f"{Colors.GREEN}✓ Found market: {tournament['name']} - {event['name']} ({market['type']}){Colors.RESET}")
-                                            return {
-                                                'event': event,
-                                                'market': market,
-                                                'line_id': line_id,
-                                                'tournament': tournament
-                                            }
+                                            candidates.append((market, line_id))
                                     except (TypeError, KeyError, IndexError) as e:
                                         # Skip malformed selections
                                         continue
+
+                        if candidates:
+                            market, line_id = random.choice(candidates)
+                            logging.info(f"{Colors.GREEN}✓ Found market: {tournament['name']} - {event['name']} ({market['type']}){Colors.RESET}")
+                            return {
+                                'event': event,
+                                'market': market,
+                                'line_id': line_id,
+                                'tournament': tournament
+                            }
         
         logging.warning(f"{Colors.YELLOW}No active markets found in {min(30, len(tournaments))} tournaments{Colors.RESET}")
         return None
@@ -1222,7 +1332,7 @@ def main():
         # Load patron credentials from user_info_patron_sandbox.json or user_info_patron_staging.json
         try:
             patron_config_file = f'user_info_patron_{config.ENVIRONMENT}.json'
-            patron_config = config.load_user_config(patron_config_file)
+            patron_config = config.load_env_account_config(config.ENVIRONMENT, 'patron.json', patron_config_file)
             
             patron_accounts = [
                 {

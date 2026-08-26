@@ -124,17 +124,14 @@ def load_patron_account(patron_num, environment='sandbox'):
     - patron_num=4 → user_info_patron_{env}.json  (deduce, usr004)
     - patron_num=8 → user_info_patron8_{env}.json  (non-deduce, usr008)
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-
     if patron_num == 4:
         # Patron4 uses the existing patron config
-        config_file = f'user_info_patron_{environment}.json'
+        folder_filename, legacy_filename = 'patron.json', f'user_info_patron_{environment}.json'
     else:
-        config_file = f'user_info_patron{patron_num}_{environment}.json'
+        folder_filename = f'patron{patron_num}.json'
+        legacy_filename = f'user_info_patron{patron_num}_{environment}.json'
 
-    config_path = os.path.join(script_dir, 'src', config_file)
-    with open(config_path) as f:
-        patron_config = json.load(f)
+    patron_config = config.load_env_account_config(environment, folder_filename, legacy_filename)
 
     base_url = config.ENVIRONMENT_URLS.get(environment, config.ENVIRONMENT_URLS['sandbox'])
 

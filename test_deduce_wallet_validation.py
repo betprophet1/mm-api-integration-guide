@@ -190,7 +190,7 @@ def test_all_accounts_comparison():
     
     # Try to add patron if available
     try:
-        patron_config = config.load_user_config(f'user_info_patron_{config.ENVIRONMENT}.json')
+        patron_config = config.load_env_account_config(config.ENVIRONMENT, 'patron.json', f'user_info_patron_{config.ENVIRONMENT}.json')
         accounts_to_test.append({
             'name': 'patron1',
             'behavior': 'normal',
@@ -346,7 +346,7 @@ def test_concurrent_4_accounts_enhanced(target_event_id=None, duration=300):
     
     # Patron non-deduce
     try:
-        patron_config = config.load_user_config(f'user_info_patron_{config.ENVIRONMENT}.json')
+        patron_config = config.load_env_account_config(config.ENVIRONMENT, 'patron.json', f'user_info_patron_{config.ENVIRONMENT}.json')
         patron_nondeduce_creds = {'username': patron_config['email'], 'password': patron_config['password']}
         framework.login_account('patron_nondeduce', patron_nondeduce_creds, account_type='patron')
         balance = framework.get_balance('patron_nondeduce')

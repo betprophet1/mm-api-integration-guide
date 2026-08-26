@@ -54,7 +54,7 @@ def test_nondeduce_cancel_race(duration=30, cancel_rate=0.5, event_id=30024812):
     print(f"{Colors.CYAN}MM2 Initial balance: ${mm2_initial_balance:,.2f}{Colors.RESET}\n")
     
     # Patron account - NON-DEDUCE matcher
-    patron_config = config.load_user_config(f'user_info_patron_{config.ENVIRONMENT}.json')
+    patron_config = config.load_env_account_config(config.ENVIRONMENT, 'patron.json', f'user_info_patron_{config.ENVIRONMENT}.json')
     patron_nondeduce_creds = {'username': patron_config['email'], 'password': patron_config['password']}
     framework.login_account('patron_nondeduce', patron_nondeduce_creds, account_type='patron')
     print(f"{Colors.GREEN}✅ Patron non-deduce (matcher) logged in{Colors.RESET}\n")

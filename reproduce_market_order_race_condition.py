@@ -62,17 +62,10 @@ def load_patron_account(environment='qa'):
     # Load patron credentials (email/password)
     try:
         patron_config_file = f'user_info_patron_{environment}.json'
-        patron_config_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            'src',
-            patron_config_file
-        )
-        
-        with open(patron_config_path) as f:
-            patron_creds = json.load(f)
-            email = patron_creds.get('email')
-            password = patron_creds.get('password')
-        
+        patron_creds = config.load_env_account_config(environment, 'patron.json', patron_config_file)
+        email = patron_creds.get('email')
+        password = patron_creds.get('password')
+
         logging.info(f"✅ Loaded patron credentials from {patron_config_file}")
     except Exception as e:
         logging.error(f"❌ Failed to load patron credentials: {e}")

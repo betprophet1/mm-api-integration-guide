@@ -9,8 +9,9 @@ ENVIRONMENT = os.getenv('MM_ENVIRONMENT', 'sandbox')  # Default to sandbox
 
 # Environment-specific URLs
 ENVIRONMENT_URLS = {
-    'sandbox': 'https://api-ss-sandbox.betprophet.co',
-    'staging': 'https://api-ss-staging.betprophet.co'
+    'sandbox': 'https://api.sandbox.prophetx.dev',
+    'staging': 'https://api.staging.prophetx.dev',
+    'qa': 'https://api.qa.prophetx.dev'
 }
 
 def load_user_config(config_file='user_info.json'):
@@ -19,9 +20,25 @@ def load_user_config(config_file='user_info.json'):
     with open(user_info_path) as fp:
         return json.load(fp)
 
+def load_env_account_config(env, folder_filename, legacy_flat_filename):
+    """Load one account's credentials for `env`.
+
+    New environments (e.g. qa) group their account files under
+    src/accounts/{env}/{folder_filename}. Environments not yet migrated
+    (sandbox, staging) keep their original flat src/{legacy_flat_filename}
+    layout -- that path is only used when no folder file exists, so this
+    is a no-op for them.
+    """
+    folder_path = os.path.join(script_dir, 'accounts', env, folder_filename)
+    if os.path.exists(folder_path):
+        with open(folder_path) as fp:
+            return json.load(fp)
+    return load_user_config(legacy_flat_filename)
+
 # Load default account (Account 1) for current environment
-default_config_file = f'user_info_{ENVIRONMENT}.json' if ENVIRONMENT != 'sandbox' else 'user_info.json'
-user_info_dict = load_user_config(default_config_file)
+user_info_dict = load_env_account_config(
+    ENVIRONMENT, 'account1.json',
+    'user_info.json' if ENVIRONMENT == 'sandbox' else f'user_info_{ENVIRONMENT}.json')
 
 MM_KEYS = {
     'access_key': user_info_dict['access_key'],
@@ -34,73 +51,34 @@ TOURNAMENTS_INTERESTED = user_info_dict['tournaments']
 def get_account_credentials(account_num=1, environment=None):
     """Get credentials for specified account number and environment"""
     env = environment or ENVIRONMENT
-    
+
     if account_num == 1:
-        if env == 'sandbox':
-            config = load_user_config('user_info.json')
-        else:
-            config = load_user_config(f'user_info_{env}.json')
-    elif account_num == 2:
-        if env == 'sandbox':
-            config = load_user_config('user_info_account2.json')
-        else:
-            config = load_user_config(f'user_info_account2_{env}.json')
-    elif account_num == 3:
-        if env == 'sandbox':
-            config = load_user_config('user_info_account3.json')
-        else:
-            config = load_user_config(f'user_info_account3_{env}.json')
-    elif account_num == 4:
-        if env == 'sandbox':
-            config = load_user_config('user_info_account4.json')
-        else:
-            config = load_user_config(f'user_info_account4_{env}.json')
-    elif account_num == 5:
-        if env == 'sandbox':
-            config = load_user_config('user_info_account5.json')
-        else:
-            config = load_user_config(f'user_info_account5_{env}.json')
-    elif account_num == 6:
-        if env == 'sandbox':
-            config = load_user_config('user_info_account6.json')
-        else:
-            config = load_user_config(f'user_info_account6_{env}.json')
-    elif account_num == 7:
-        if env == 'sandbox':
-            config = load_user_config('user_info_account7.json')
-        else:
-            config = load_user_config(f'user_info_account7_{env}.json')
-    elif account_num == 8:
-        if env == 'sandbox':
-            config = load_user_config('user_info_account8.json')
-        else:
-            config = load_user_config(f'user_info_account8_{env}.json')
-    elif account_num == 9:
-        if env == 'sandbox':
-            config = load_user_config('user_info_account9.json')
-        else:
-            config = load_user_config(f'user_info_account9_{env}.json')
-    elif account_num == 10:
-        if env == 'sandbox':
-            config = load_user_config('user_info_account10.json')
-        else:
-            config = load_user_config(f'user_info_account10_{env}.json')
+        legacy = 'user_info.json' if env == 'sandbox' else f'user_info_{env}.json'
+        config = load_env_account_config(env, 'account1.json', legacy)
+    elif isinstance(account_num, int) and 2 <= account_num <= 10:
+        legacy = (f'user_info_account{account_num}.json' if env == 'sandbox'
+                  else f'user_info_account{account_num}_{env}.json')
+        config = load_env_account_config(env, f'account{account_num}.json', legacy)
     elif account_num == 'patron':
-        config = load_user_config(f'user_info_patron_{env}.json')
+        config = load_env_account_config(env, 'patron.json', f'user_info_patron_{env}.json')
     elif isinstance(account_num, str) and account_num.startswith('exposure_mm'):
         # Exposure MM accounts from user_info_exposure.json
         exposure_config = load_user_config('user_info_exposure.json')
         config = exposure_config[account_num]
     elif isinstance(account_num, str) and account_num.startswith('patron'):
         # Support patron3, patron4, etc.
-        config = load_user_config(f'user_info_{account_num}_{env}.json')
+        config = load_env_account_config(env, f'{account_num}.json', f'user_info_{account_num}_{env}.json')
     else:
         raise ValueError(f"Account {account_num} not supported")
-    
+
     return {
         'access_key': config['access_key'],
         'secret_key': config['secret_key'],
-        'tournaments': config.get('tournaments', ['MLB'])
+        'tournaments': config.get('tournaments', ['MLB']),
+        # Present only for accounts that also have a web login (needed for GEC/LEC,
+        # which requires a web token -- partner/auth/login gives an MM-only token).
+        'email': config.get('email'),
+        'password': config.get('password'),
     }
 
 # Set BASE_URL based on environment
@@ -109,7 +87,7 @@ URL = {
     'mm_login': 'partner/auth/login',
     'mm_refresh': 'partner/auth/refresh',
     'mm_ping': 'partner/mm/pusher/ping',
-    'mm_auth': 'partner/mm/pusher',
+    'mm_auth': 'partner/v4/mm/pusher',
     'mm_tournaments': 'partner/mm/get_tournaments',
     'mm_events': 'partner/mm/get_sport_events',
     'mm_markets': 'partner/mm/get_markets',

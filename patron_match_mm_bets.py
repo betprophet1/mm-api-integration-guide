@@ -79,31 +79,24 @@ class PatronAccountMatcher:
         """Load patron account credentials from config"""
         try:
             # Try to load patron-specific credentials based on environment
-            if self.environment == 'sandbox':
-                patron_config_file = 'user_info_patron.json'
-            else:
-                patron_config_file = f'user_info_patron_{self.environment}.json'
-            
-            patron_config_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), 
-                'src', 
-                patron_config_file
-            )
-            
-            if os.path.exists(patron_config_path):
-                with open(patron_config_path) as f:
-                    config_data = json.load(f)
-                    self.patron_credentials = {
-                        'email': config_data.get('email'),
-                        'password': config_data.get('password'),
-                        'tournaments': config_data.get('tournaments', ['MLB'])
-                    }
-                    logging.info(f"✅ Loaded patron credentials from {patron_config_file}")
-                    return True
-            else:
-                logging.warning(f"⚠️  Patron config file not found at {patron_config_path}")
-                logging.info("📝 Please create src/user_info_patron.json with patron account credentials")
+            legacy_flat_filename = (f'user_info_patron_{self.environment}.json' if self.environment != 'sandbox'
+                                     else 'user_info_patron_sandbox.json')
+
+            try:
+                config_data = config.load_env_account_config(self.environment, 'patron.json', legacy_flat_filename)
+            except FileNotFoundError:
+                logging.warning(f"⚠️  Patron config not found for env '{self.environment}' "
+                                 f"(checked src/accounts/{self.environment}/patron.json and src/{legacy_flat_filename})")
+                logging.info(f"📝 Please create src/accounts/{self.environment}/patron.json with patron account credentials")
                 return False
+
+            self.patron_credentials = {
+                'email': config_data.get('email'),
+                'password': config_data.get('password'),
+                'tournaments': config_data.get('tournaments', ['MLB']),
+            }
+            logging.info(f"✅ Loaded patron credentials for env '{self.environment}'")
+            return True
                 
         except Exception as e:
             logging.error(f"❌ Error loading patron credentials: {e}")
@@ -114,8 +107,7 @@ class PatronAccountMatcher:
         try:
             # Use web authentication endpoint
             login_url = urljoin(self.base_url, 'api/v1/auth/login')
-            device_id = str(uuid.uuid1())
-            
+
             headers = {
                 '__source': 'web',
                 'accept': 'application/json, text/plain, */*',
@@ -123,15 +115,23 @@ class PatronAccountMatcher:
                 'origin': self.base_url.replace('api-', ''),
                 'x-currency': 'cash'
             }
-            
-            request_body = {
+
+            base_body = {
                 'email': self.patron_credentials['email'],
                 'password': self.patron_credentials['password'],
-                'code': '123456',
-                'device_id': device_id
             }
-            
-            response = requests.post(login_url, headers=headers, json=request_body)
+            # Whether an account has 2FA enabled isn't knowable ahead of login, so try
+            # without an OTP code first, and only fall back to the platform-wide
+            # test-account OTP bypass ('123456') if that attempt fails. Confirmed live:
+            # an account with a pending 2FA challenge fails hard (non-200) without a
+            # code and succeeds once it's included; an account with none succeeds on
+            # the first attempt and never reaches the retry, so this never sends a
+            # code to an account that doesn't expect one (which 404s as otp_invalid).
+            response = requests.post(login_url, headers=headers, json={**base_body, 'device_id': str(uuid.uuid1())})
+            if response.status_code != 200:
+                response = requests.post(
+                    login_url, headers=headers,
+                    json={**base_body, 'device_id': str(uuid.uuid1()), 'code': '123456'})
             
             if response.status_code != 200:
                 logging.error(f"❌ Patron login failed: {response.status_code}")

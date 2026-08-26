@@ -1,0 +1,8 @@
+{
+    "_comment": "QA credentials for Market Maker API - usr001. email/password added for the web token GEC/LEC needs (partner/auth/login gives no web session) -- confirmed live: usr001 has a working web login on QA.",
+    "access_key": "8a405ef5d12d80a553b74078913cba81",
+    "secret_key": "9f2934a50028a5ac0b503befd960da2b",
+    "email": "lam.tran+usr001@betprophet.co",
+    "password": "Kh0ngbiet1",
+    "tournaments": ["MLB"]
+}
