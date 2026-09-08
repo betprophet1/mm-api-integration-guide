@@ -1,6 +1,7 @@
 {
     "_comment": "Patron account credentials - web authentication",
-    "email": "lam.tran+usr004@betprophet.co",
+    "email": "lam.tran+usr001@betprophet.co",
     "password": "Kh0ngbiet1",
+    "user_uuid": "4a95fb4b-39bc-43a8-915f-05e0ea380b6b",
     "tournaments": ["NBA", "College Basketball", "NHL", "MLB", "WTA"]
 }

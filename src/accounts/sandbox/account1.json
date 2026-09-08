@@ -2,5 +2,6 @@
     "_comment": "Updated with new Market Maker API credentials for race condition testing.",
     "access_key": "e85df05bd1bd885fbc0fc4b24fdd2500",
     "secret_key": "67344329e054349f07e7a29249dcadeb",
+    "user_uuid": "279cc6a1-d926-4273-a18a-782eccfbce7b",
     "tournaments": ["NBA", "College Basketball", "NHL", "MLB", "WTA"]
 }

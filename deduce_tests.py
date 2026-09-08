@@ -15,6 +15,12 @@ from typing import Dict, List, Tuple, Optional
 from src import config
 from src.log import logging
 
+# Every requests.* call below passes this -- without it, a server that never
+# responds (confirmed live under heavy load: --rps 200 --workers 25) blocks
+# that thread forever with no error, which in turn blocks a ThreadPoolExecutor
+# shutdown (e.g. concentration_race/rapid_fire.py) indefinitely with no log output.
+REQUEST_TIMEOUT_SEC = 30
+
 # ANSI color codes for terminal output
 class Colors:
     GREEN = '\033[92m'
@@ -57,7 +63,7 @@ class DeduceTestFramework:
                 'access_key': credentials['access_key'],
                 'secret_key': credentials['secret_key'],
             }
-            response = requests.post(login_url, data=json.dumps(request_body))
+            response = requests.post(login_url, data=json.dumps(request_body), timeout=REQUEST_TIMEOUT_SEC)
         else:
             # Patron login with email/password using web API format
             login_url = urljoin(self.base_url, self.patron_login_url)
@@ -73,23 +79,38 @@ class DeduceTestFramework:
             }
             # Whether an account has 2FA enabled isn't knowable ahead of login, so try
             # without an OTP code first, and only fall back to the platform-wide
-            # test-account OTP bypass ('123456') if that attempt fails. Confirmed live:
-            # an account with a pending 2FA challenge fails hard (non-200) without a
-            # code and succeeds once it's included; an account with none succeeds on
-            # the first attempt and never reaches the retry, so this never sends a
-            # code to an account that doesn't expect one (which 404s as otp_invalid).
-            response = requests.post(login_url, json={**base_body, 'device_id': str(uuid.uuid1())}, headers=headers)
-            if response.status_code != 200:
+            # test-account OTP bypass ('123456') if that attempt fails. Confirmed live
+            # on staging: a pending-2FA account returns HTTP 200 with an error body
+            # ({"code": "account_required_2fa"}), not a non-200 status -- so a
+            # status-only check silently "succeeds" with no accessToken in the
+            # response, leaving the session token-less. Retry whenever the first
+            # attempt didn't actually yield a token, not just on a non-200 status; an
+            # account with no 2FA gets a token on the first try and never reaches the
+            # retry, so this never sends a code to an account that doesn't expect one
+            # (which 404s as otp_invalid).
+            response = requests.post(login_url, json={**base_body, 'device_id': str(uuid.uuid1())}, headers=headers,
+                                      timeout=REQUEST_TIMEOUT_SEC)
+            try:
+                first_data = json.loads(response.content)
+            except ValueError:
+                first_data = {}
+            has_token = bool(first_data.get('accessToken') or first_data.get('data', {}).get('access_token'))
+            if response.status_code != 200 or not has_token:
                 response = requests.post(
-                    login_url, json={**base_body, 'device_id': str(uuid.uuid1()), 'code': '123456'}, headers=headers)
-        
+                    login_url, json={**base_body, 'device_id': str(uuid.uuid1()), 'code': '123456'}, headers=headers,
+                    timeout=REQUEST_TIMEOUT_SEC)
+
         if response.status_code != 200:
             raise Exception(f"Login failed for {account_name} ({account_type}): {response.content}")
-            
+
         response_data = json.loads(response.content)
         # Handle different response formats
         if account_type == 'patron':
-            session = {'access_token': response_data.get('accessToken', response_data.get('data', {}).get('access_token'))}
+            access_token = response_data.get('accessToken', response_data.get('data', {}).get('access_token'))
+            if not access_token:
+                raise Exception(f"Login for {account_name} (patron) returned HTTP 200 but no accessToken -- "
+                                 f"response: {response.content}")
+            session = {'access_token': access_token}
         else:
             session = response_data['data']
             
@@ -146,7 +167,7 @@ class DeduceTestFramework:
             # Use MM API balance endpoint for MM accounts
             balance_url = urljoin(self.base_url, config.URL['mm_balance'])
         
-        response = requests.get(balance_url, headers=self.get_auth_header(account_name))
+        response = requests.get(balance_url, headers=self.get_auth_header(account_name), timeout=REQUEST_TIMEOUT_SEC)
         
         if response.status_code != 200:
             raise Exception(f"Failed to get balance for {account_name}")
@@ -176,7 +197,7 @@ class DeduceTestFramework:
         """Get exposure information for an account"""
         try:
             exposure_url = urljoin(self.base_url, config.URL.get('exposure_balance', 'partner/exposure/get_balance'))
-            response = requests.get(exposure_url, headers=self.get_auth_header(account_name))
+            response = requests.get(exposure_url, headers=self.get_auth_header(account_name), timeout=REQUEST_TIMEOUT_SEC)
             
             if response.status_code == 200:
                 exposure_data = json.loads(response.content).get('data', {})
@@ -227,7 +248,7 @@ class DeduceTestFramework:
                 headers = self.get_auth_header(account_name)
                 headers['__source'] = 'web'
                 
-                response = requests.get(matched_bets_url, params=params, headers=headers)
+                response = requests.get(matched_bets_url, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SEC)
                 
                 if response.status_code == 200:
                     response_data = json.loads(response.content)
@@ -243,7 +264,8 @@ class DeduceTestFramework:
                 # MM accounts use MM API endpoint
                 matched_bets_url = urljoin(self.base_url, config.URL.get('mm_get_matched_bets', 'partner/mm/get_matched_bets'))
                 params = {'limit': limit, 'offset': offset}
-                response = requests.get(matched_bets_url, params=params, headers=self.get_auth_header(account_name))
+                response = requests.get(matched_bets_url, params=params, headers=self.get_auth_header(account_name),
+                                         timeout=REQUEST_TIMEOUT_SEC)
 
                 if response.status_code == 200:
                     matched_bets = json.loads(response.content).get('data', {}).get('matched_bets', [])
@@ -404,7 +426,7 @@ class DeduceTestFramework:
             }
             headers = self.get_auth_header(account_name)
         
-        response = requests.post(play_url, json=body, headers=headers)
+        response = requests.post(play_url, json=body, headers=headers, timeout=REQUEST_TIMEOUT_SEC)
         
         # Accept both 200 and 201 status codes
         if response.status_code not in [200, 201]:
@@ -442,7 +464,7 @@ class DeduceTestFramework:
             'wager_id': wager_id,
         }
         
-        response = requests.post(cancel_url, json=body, headers=self.get_auth_header(account_name))
+        response = requests.post(cancel_url, json=body, headers=self.get_auth_header(account_name), timeout=REQUEST_TIMEOUT_SEC)
         
         if response.status_code == 200:
             logging.info(f"{Colors.GREEN}✓ {account_name} cancelled wager{Colors.RESET}")
@@ -466,7 +488,7 @@ class DeduceTestFramework:
         _classify_cancel_error -- instead of only counting pass/fail.
         """
         cancel_all_url = urljoin(self.base_url, config.URL['mm_cancel_all_wagers'])
-        response = requests.post(cancel_all_url, json={}, headers=self.get_auth_header(account_name))
+        response = requests.post(cancel_all_url, json={}, headers=self.get_auth_header(account_name), timeout=REQUEST_TIMEOUT_SEC)
 
         if response.status_code == 200:
             logging.info(f"{Colors.GREEN}✓ {account_name} cancel-all succeeded{Colors.RESET}")
@@ -489,7 +511,7 @@ class DeduceTestFramework:
         headers['__source'] = 'web'
         body = {'lineId': line_id, 'stake': stake}
 
-        response = requests.post(estimate_url, json=body, headers=headers)
+        response = requests.post(estimate_url, json=body, headers=headers, timeout=REQUEST_TIMEOUT_SEC)
         if response.status_code != 200:
             logging.warning(f"{Colors.YELLOW}market order estimate-odds failed for {account_name}: "
                              f"{response.status_code} {response.content.decode('utf-8', 'replace')}{Colors.RESET}")
@@ -527,7 +549,7 @@ class DeduceTestFramework:
             'stake': stake,
         }
 
-        response = requests.post(mo_url, json=body, headers=headers)
+        response = requests.post(mo_url, json=body, headers=headers, timeout=REQUEST_TIMEOUT_SEC)
         if response.status_code != 200:
             error_msg = response.content.decode('utf-8', 'replace')
             logging.error(f"{Colors.RED}✗ Failed to place market order for {account_name}: {error_msg}{Colors.RESET}")
@@ -555,7 +577,8 @@ class DeduceTestFramework:
                 markets_response = requests.get(
                     multiple_markets_url,
                     params={'event_ids': str(target_event_id)},
-                    headers=self.get_auth_header(account_name)
+                    headers=self.get_auth_header(account_name),
+                    timeout=REQUEST_TIMEOUT_SEC
                 )
                 if markets_response.status_code == 200:
                     markets_data = json.loads(markets_response.content).get('data', {})
@@ -586,7 +609,7 @@ class DeduceTestFramework:
         # Fallback: general search prioritizing common tournaments
         # Get tournaments
         t_url = urljoin(self.base_url, config.URL['mm_tournaments'])
-        response = requests.get(t_url, headers=self.get_auth_header(account_name))
+        response = requests.get(t_url, headers=self.get_auth_header(account_name), timeout=REQUEST_TIMEOUT_SEC)
         
         if response.status_code != 200:
             logging.warning(f"Failed to get tournaments: {response.status_code}")
@@ -616,9 +639,10 @@ class DeduceTestFramework:
             priority_marker = "🎯" if tournament['name'] in priority_tournaments else ""
             
             events_response = requests.get(
-                event_url, 
-                params={'tournament_id': tournament['id']}, 
-                headers=self.get_auth_header(account_name)
+                event_url,
+                params={'tournament_id': tournament['id']},
+                headers=self.get_auth_header(account_name),
+                timeout=REQUEST_TIMEOUT_SEC
             )
             
             if events_response.status_code == 200:
@@ -633,7 +657,8 @@ class DeduceTestFramework:
                     markets_response = requests.get(
                         multiple_markets_url,
                         params={'event_ids': str(event['event_id'])},
-                        headers=self.get_auth_header(account_name)
+                        headers=self.get_auth_header(account_name),
+                        timeout=REQUEST_TIMEOUT_SEC
                     )
                     
                     if markets_response.status_code == 200:
@@ -1050,7 +1075,8 @@ class DeduceTestFramework:
                 response = requests.post(
                     batch_place_url,
                     json={'data': batch_body},
-                    headers=self.get_auth_header(mm_account)
+                    headers=self.get_auth_header(mm_account),
+                    timeout=REQUEST_TIMEOUT_SEC
                 )
                 
                 if response.status_code == 200:
@@ -1162,7 +1188,8 @@ class DeduceTestFramework:
                 response = requests.post(
                     batch_cancel_url,
                     json={'data': cancel_body},
-                    headers=self.get_auth_header(mm_account)
+                    headers=self.get_auth_header(mm_account),
+                    timeout=REQUEST_TIMEOUT_SEC
                 )
                 
                 if response.status_code == 200:

@@ -85,9 +85,6 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urljoin
-
-import requests
 
 from deduce_tests import DeduceTestFramework, Colors
 from test_deduce_race_conditions import RaceConditionTest, get_odds_ladder
@@ -96,75 +93,13 @@ from src import config
 from concentration_race.accounts import login_makers, login_takers
 from concentration_race.market import find_market, resolve_opposite_line
 from concentration_race.logutil import quiet_console_log_to_file
+from concentration_race.wallet_exposure import (
+    get_gec, get_lec_snapshot, lec_changed, login_maker_web_session,
+)
 
 
 ODDS_REFRESH_INTERVAL_SEC = 3.0
 FILL_RATE_WINDOW_SEC = 60.0
-
-
-def get_gec(framework, account_name):
-    """GEC snapshot: wallet.exposureCredit, from the same /api/v1/wallet payload
-    framework.get_balance() already fetches for patron-type accounts. Confirmed
-    live: this only moves for an account that has been MATCHED ON BOTH SIDES of
-    a market (a single one-sided match, or a plain taker/patron account, never
-    moves it -- verified on both sandbox exposure_mm2 and QA's own maker/usr001).
-    Returns None if unavailable (e.g. the account has no web token)."""
-    try:
-        return framework.get_balance(account_name).get('exposureCredit')
-    except Exception as e:
-        logging.warning(f"GEC check failed for {account_name}: {e}")
-        return None
-
-
-def get_lec_snapshot(framework, account_name, event_id):
-    """LEC snapshot: GET /api/v2/wallet/exposures, scoped to event_id (a required
-    param -- confirmed live, 422 without it). Returns {(marketId, outcomeId):
-    balance} for event_id's entries, or None on failure.
-
-    Confirmed live field names: each entry has eventId/marketId/outcomeId/balance/
-    line. An account can carry entries for OTHER events/markets from prior activity
-    (seen live) -- always compare the same (marketId, outcomeId) key before/after,
-    never just entry count: a populated entry's balance can also move *down* as
-    exposure nets out (seen live, 30.98 -> 20.93 after a same-market, both-sides
-    match), not just appear from empty."""
-    url = urljoin(framework.base_url, 'api/v2/wallet/exposures')
-    try:
-        response = requests.get(url, headers=framework.get_auth_header(account_name),
-                                 params={'eventIds': str(event_id)}, timeout=10)
-        if response.status_code != 200:
-            logging.warning(f"LEC check failed for {account_name}: {response.status_code} "
-                             f"{response.text[:200]}")
-            return None
-        entries = response.json().get('data', [])
-        return {(e.get('marketId'), e.get('outcomeId')): e.get('balance', 0)
-                for e in entries if e.get('eventId') == event_id}
-    except Exception as e:
-        logging.warning(f"LEC check exception for {account_name}: {e}")
-        return None
-
-
-def lec_changed(before, after):
-    """True if any (marketId, outcomeId) entry's balance differs, or a key was
-    added/removed, between two get_lec_snapshot() results. False (not None) if
-    either snapshot failed, so a fetch failure doesn't masquerade as 'changed'."""
-    if before is None or after is None:
-        return False
-    return before != after
-
-
-def login_maker_web_session(framework, maker_account_num, maker_name):
-    """Log in a second, web-token session for a maker account, needed for GEC/LEC
-    (partner/auth/login gives only an MM token). Session name: f'{maker_name}_web'.
-    Returns that name, or None if the account has no email/password on file (not
-    every MM account does -- e.g. QA's plain numbered accounts before this file
-    added one for account1/usr001)."""
-    creds = config.get_account_credentials(maker_account_num, framework.environment)
-    if not creds.get('email'):
-        return None
-    web_name = f'{maker_name}_web'
-    framework.login_account(web_name, {'email': creds['email'], 'password': creds['password']},
-                             account_type='patron')
-    return web_name
 
 
 def run(duration=300, bets_per_second=5, event_id=None, min_stake=2.0, max_stake=10.0, cancel_interval=0.0,
@@ -396,7 +331,14 @@ def run(duration=300, bets_per_second=5, event_id=None, min_stake=2.0, max_stake
     def fire_cancel_all():
         nonlocal cancel_all_attempts, cancel_all_successes
         start = time.time()
-        while time.time() - start < duration:
+        while True:
+            # Only cancel if it lands within `duration` -- if the next interval
+            # would push past it, skip rather than sleeping the full interval
+            # and running a cancel late. This thread is one of the futures the
+            # main ThreadPoolExecutor waits on to shut down, so running past
+            # duration here would delay the whole run's results indefinitely.
+            if duration - (time.time() - start) <= cancel_interval:
+                break
             time.sleep(cancel_interval)
             for account_name in makers:
                 try:

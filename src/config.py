@@ -79,6 +79,9 @@ def get_account_credentials(account_num=1, environment=None):
         # which requires a web token -- partner/auth/login gives an MM-only token).
         'email': config.get('email'),
         'password': config.get('password'),
+        # Present only for accounts where it's been looked up and recorded on file
+        # (e.g. to cross-reference a DB row's user_uuid back to a known account).
+        'user_uuid': config.get('user_uuid'),
     }
 
 # Set BASE_URL based on environment

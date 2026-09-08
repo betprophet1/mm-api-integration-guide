@@ -2,5 +2,6 @@
     "_comment": "Patron account credentials for QA - web authentication - usr004",
     "email": "lam.tran+usr004@betprophet.co",
     "password": "Kh0ngbiet1",
+    "user_uuid": "ef5c3be3-ad4d-4e0f-ace7-9705690c826e",
     "tournaments": ["MLB"]
 }

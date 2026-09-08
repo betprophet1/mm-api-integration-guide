@@ -2,5 +2,6 @@
     "_comment": "Patron8 account credentials (NON-DEDUCE) - web authentication",
     "email": "lam.tran+usr008@betprophet.co",
     "password": "Kh0ngbiet1",
+    "user_uuid": "47480c65-2c71-4572-b98c-72f757562381",
     "tournaments": ["NBA", "College Basketball", "NHL", "MLB", "WTA"]
 }

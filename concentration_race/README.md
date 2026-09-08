@@ -21,10 +21,20 @@ Covers both limit orders and market orders (see below) as taker wager types.
 mm1 and mm2's staging credentials resolve to the same underlying partner
 account (confirmed via identical `/partner/mm/get_balance` responses), so
 MM-vs-MM wagers are rejected as `self_match`. There's also only one distinct
-staging patron identity in this repo (`src/user_info_patron_staging.json`;
-other patron files are sandbox-only). So the maker is always mm1 and the
-taker is always the staging patron — there's no account combination available
-for a true 3+-party race.
+staging patron identity in this repo (`src/accounts/staging/patron.json`;
+other patron files are sandbox-only). So by default the maker is mm1 and the
+taker is the staging patron.
+
+`--maker-accounts`/`--taker-accounts` let you widen either side with more
+accounts (`--maker-accounts 1 2`, `--taker-accounts patron patron3`) — each
+account gets its own placing thread(s) (`--maker-workers`/`--taker-workers`,
+default `--workers`). This never turns a patron into a maker or vice versa —
+MM accounts are always makers, patron accounts are always takers (see
+`accounts.py`'s module docstring). Adding a maker account doesn't
+automatically widen the maker side, though: `login_makers()` decodes each
+account's JWT `partnerID` claim and fails fast if two maker accounts collide
+on the same partner (as mm1/mm2 do) — worth checking before assuming
+`--maker-accounts 1 2` gives you two genuinely distinct makers on staging.
 
 ## Usage
 
@@ -60,7 +70,11 @@ MM_ENVIRONMENT=staging python3 -m concentration_race.rapid_fire --duration 300 -
 |---|---|---|
 | `--duration` | `300` | Seconds to fire wagers, per side |
 | `--rps` | `5` | Target/max bets per second per side, aggregate across `--workers` — a ceiling, not a guarantee, see below |
-| `--workers` | `1` | Concurrent placing threads per side |
+| `--workers` | `1` | Concurrent placing threads per account per side. Total threads on a side = workers × accounts on that side. Overridden per side by `--maker-workers`/`--taker-workers` |
+| `--maker-workers` | `--workers` | Concurrent placing threads per maker account |
+| `--taker-workers` | `--workers` | Concurrent placing threads per taker account |
+| `--maker-accounts` | `1` (mm1) | MM accounts to use as makers, e.g. `--maker-accounts 1 2`, see below |
+| `--taker-accounts` | `patron` | Patron accounts to use as takers, e.g. `--taker-accounts patron patron3`, see below |
 | `--event-id` | auto-discover | Staging event ID to bet on |
 | `--min-stake` | `2.0` | Minimum stake per wager |
 | `--max-stake` | `10.0` | Maximum stake per wager |
